@@ -1,0 +1,50 @@
+name: Build JPY distributions
+
+on:
+  pull_request:
+    branches: [ 'master', 'release/v*' ]
+  push:
+    branches: [ 'master', 'release/v*' ]
+
+jobs:
+  bdist-wheels:
+    runs-on: ${{ matrix.info.machine }}
+    strategy:
+      fail-fast: false
+      matrix:
+        info:
+          - { machine: 'ubuntu-20.04', python: '3.13', arch: 'amd64', cmd: '.github/env/Linux/bdist-wheel.sh' }
+#          - { machine: 'ubuntu-20.04', python: '3.13', arch: 'arm64', cmd: '.github/env/Linux/bdist-wheel.sh' }
+          - { machine: 'windows-2022', python: '3.13', arch: 'amd64', cmd: '.\.github\env\Windows\bdist-wheel.ps1' }
+          - { machine: 'macos-13', python: '3.13', arch: 'amd64', cmd: '.github/env/macOS/bdist-wheel.sh' }
+          - { machine: 'macos-latest', python: '3.13', arch: 'arm64', cmd: '.github/env/macOS/bdist-wheel.sh' }
+
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+      - run: |
+          uv python install 3.13t
+          uv venv --python 3.13t
+          . .venv/bin/activate
+          echo PATH=$PATH >> $GITHUB_ENV
+
+#      - uses: actions/setup-python@v5
+#        with:
+#          python-version: ${{ matrix.info.python }}
+
+      - uses: actions/setup-java@v4
+        id: setup-java
+        with:
+          distribution: 'temurin'
+          java-version: '8'
+
+      - run: pip install setuptools
+      - run: ${{ matrix.info.cmd }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.info.python }}-${{ matrix.info.machine }}-${{ matrix.info.arch }}
+          path: dist/*.whl
+          retention-days: 1
