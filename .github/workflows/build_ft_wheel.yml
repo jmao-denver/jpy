@@ -13,11 +13,11 @@ jobs:
       fail-fast: false
       matrix:
         info:
-          - { machine: 'ubuntu-20.04', python: '3.13', arch: 'amd64', cmd: '.github/env/Linux/bdist-wheel.sh' }
+          - { machine: 'ubuntu-20.04', python: '3.13t', arch: 'amd64', cmd: '.github/env/Linux/bdist-wheel.sh' }
 #          - { machine: 'ubuntu-20.04', python: '3.13', arch: 'arm64', cmd: '.github/env/Linux/bdist-wheel.sh' }
 #          - { machine: 'windows-2022', python: '3.13', arch: 'amd64', cmd: '.\.github\env\Windows\bdist-wheel.ps1' }
-          - { machine: 'macos-13', python: '3.13', arch: 'amd64', cmd: '.github/env/macOS/bdist-wheel.sh' }
-          - { machine: 'macos-latest', python: '3.13', arch: 'arm64', cmd: '.github/env/macOS/bdist-wheel.sh' }
+          - { machine: 'macos-13', python: '3.13t', arch: 'amd64', cmd: '.github/env/macOS/bdist-wheel.sh' }
+          - { machine: 'macos-latest', python: '3.13t', arch: 'arm64', cmd: '.github/env/macOS/bdist-wheel.sh' }
 
 
     steps:
@@ -45,7 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         info:
-          - { machine: 'windows-2022', python: '3.13', arch: 'amd64', cmd: '.\.github\env\Windows\bdist-wheel.ps1' }
+          - { machine: 'windows-2022', python: '3.13t', arch: 'amd64', cmd: '.\.github\env\Windows\bdist-wheel.ps1' }
 
     steps:
       - uses: actions/checkout@v4
