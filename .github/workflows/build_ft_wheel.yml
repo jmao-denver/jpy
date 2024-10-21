@@ -1,4 +1,4 @@
-name: Build JPY distributions
+name: Build Free-Threaded JPY distributions
 
 on:
   pull_request:
@@ -23,24 +23,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v3
-      - run: |
-          uv python install 3.13t
-          uv venv --python 3.13t
-          . .venv/bin/activate
-          echo PATH=$PATH >> $GITHUB_ENV
-
-#      - uses: actions/setup-python@v5
-#        with:
-#          python-version: ${{ matrix.info.python }}
-
       - uses: actions/setup-java@v4
         id: setup-java
         with:
           distribution: 'temurin'
           java-version: '8'
 
-      - run: pip install setuptools
+      - uses: astral-sh/setup-uv@v3
+      - run: |
+          uv python install 3.13t
+          uv venv --python 3.13t
+          source .venv/bin/activate
+          echo PATH=$PATH >> $GITHUB_ENV
+
       - run: ${{ matrix.info.cmd }}
 
       - uses: actions/upload-artifact@v4
