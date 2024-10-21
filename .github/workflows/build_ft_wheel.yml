@@ -26,7 +26,6 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - run: |
           uv python install 3.13t
-            uv python use 3.13t
           uv venv --python 3.13t
           source .venv/bin/activate
           uv pip install pip
@@ -54,7 +53,6 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - run: |
           uv python install 3.13t
-            uv python use 3.13t
           uv venv --python 3.13t
           .venv\Scripts\activate.bat
           uv pip install pip
