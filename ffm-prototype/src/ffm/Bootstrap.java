@@ -42,6 +42,27 @@ public final class Bootstrap {
         }
     }
 
+    /**
+     * jbridge.apply(f, x) -> f(x) + 100, both directions in one call:
+     * Python -> Java (this upcall), then Java -> Python (calling f back).
+     */
+    static MemorySegment apply(MemorySegment self, MemorySegment args) {
+        try {
+            MemorySegment f = (MemorySegment) Py.PyTuple_GetItem.invokeExact(args, 0L);
+            MemorySegment x = (MemorySegment) Py.PyTuple_GetItem.invokeExact(args, 1L);
+            if (f.equals(Py.NULL) || x.equals(Py.NULL)) return err("apply needs (callable, int)");
+            long xv = (long) Py.PyLong_AsLong.invokeExact(x);
+            MemorySegment r = Py.call(f, xv);              // Java -> Python
+            long rv = Py.asLong(r);
+            Py.decRef(r);
+            return (MemorySegment) Py.PyLong_FromLong.invokeExact(rv + 100); // Java's contribution
+        } catch (Py.PyException e) {
+            return err("python callable failed: " + e.getMessage());
+        } catch (Throwable t) {
+            return err("apply failed: " + t);
+        }
+    }
+
     static MemorySegment err(String msg) {
         try (Arena a = Arena.ofConfined()) {
             Py.PyErr_SetString.invokeExact(Py.PyExc_RuntimeError, Py.cstr(a, msg));
@@ -62,6 +83,10 @@ public final class Bootstrap {
                     lk.findStatic(Bootstrap.class, "javaVersion",
                             MethodType.methodType(MemorySegment.class, MemorySegment.class, MemorySegment.class)),
                     pyCFunction, ARENA);
+            MemorySegment applyStub = Linker.nativeLinker().upcallStub(
+                    lk.findStatic(Bootstrap.class, "apply",
+                            MethodType.methodType(MemorySegment.class, MemorySegment.class, MemorySegment.class)),
+                    pyCFunction, ARENA);
 
             // creates the module and registers it in sys.modules; 'import jbridge' then finds it
             MemorySegment mod = Py.checked((MemorySegment)
@@ -69,6 +94,7 @@ public final class Bootstrap {
 
             addFunction(mod, "java_add", addStub, "adds two ints in Java");
             addFunction(mod, "java_version", verStub, "returns the JVM's java.version");
+            addFunction(mod, "apply", applyStub, "apply(f, x): Java calls f(x) back into Python, adds 100");
         } catch (Throwable t) {
             // never let anything escape into JNI's CallStaticVoidMethodA
             System.err.println("Bootstrap.install failed: " + t);
