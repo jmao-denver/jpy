@@ -50,12 +50,34 @@ bridge. The gap (4x) is the budget available for overload matching in Java.
 - `src/ffm/M1.java` … `M5.java` — the milestones
 - `run.sh` — compile + run with `--enable-native-access=ALL-UNNAMED`
 
+## Python-first bootstrap (pyloader/)
+
+The other start mode, replacing the compiled extension module with pure Python:
+
+```bash
+cd pyloader && python3.12 test_bridge.py
+```
+
+`jbridge_loader.py` (~100 lines, pure Python) ctypes-loads libjvm, calls
+`JNI_CreateJavaVM` — the one piece of JNI the design keeps — and invokes
+`ffm.Bootstrap.install()` through the JNI invocation API. `install()` uses FFM
+to register a `jbridge` module into the already-running interpreter; after
+that, `import jbridge` works and its functions run in Java. Verified: calls,
+error translation, docstrings.
+
+Two preconditions verified here: the uv python executable links
+`libpython3.12.dylib` dynamically (so Java's `libraryLookup` of the same path
+binds to the same interpreter state — a statically linked Python would need
+dlsym(RTLD_DEFAULT) instead), and the JNIEnv vtable indices come from the
+JDK's own jni.h (`tools/jni_indices.py`).
+
 ## What this proves / doesn't
 
 Proves: embedding, downcalls, upcall stubs as PyCFunctions and type slots
 (`PyType_FromSpec`), unknown-thread auto-attach, GIL discipline from Java,
-exception translation, clean teardown, competitive per-call costs.
+exception translation, clean teardown, competitive per-call costs, and both
+bootstrap directions (Java-first and Python-first) with zero compiled
+Python-version-specific code.
 
-Doesn't touch: JVM-created-from-Python bootstrap (stays JNI via ctypes),
-zero-copy Java-array buffers (no FFM equivalent; needs a JNI shim or copies),
-free-threaded builds, overload matching at scale.
+Doesn't touch: zero-copy Java-array buffers (no FFM equivalent; needs a JNI
+shim or copies), free-threaded builds, overload matching at scale.
