@@ -209,6 +209,32 @@ public final class Py {
         } catch (Throwable t) { throw sneaky(t); }
     }
 
+    /**
+     * Convert a Python number to a Java double. PyFloat_AsDouble accepts any
+     * object with __float__/__index__ and signals failure by returning -1.0
+     * with the error indicator set.
+     */
+    public static double asDouble(MemorySegment obj) {
+        try {
+            double v = (double) PyFloat_AsDouble.invokeExact(obj);
+            if (v == -1.0) {
+                MemorySegment err = (MemorySegment) PyErr_Occurred.invokeExact();
+                if (!err.equals(NULL)) throw fetchError();
+            }
+            return v;
+        } catch (Throwable t) { throw sneaky(t); }
+    }
+
+    /** Call a Python callable and narrow the result to a Java primitive float. */
+    public static float callFloat(MemorySegment callable, long... args) {
+        MemorySegment r = call(callable, args);
+        try {
+            return (float) asDouble(r);
+        } finally {
+            decRef(r);
+        }
+    }
+
     public static void incRef(MemorySegment obj) {
         try { Py_IncRef.invokeExact(obj); } catch (Throwable t) { throw sneaky(t); }
     }
