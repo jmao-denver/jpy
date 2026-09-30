@@ -144,11 +144,21 @@ but these".
    primitive array to Python's buffer protocol without copying (numpy can wrap
    it directly). FFM cannot produce a native address for an on-heap Java
    array; heap `MemorySegment`s cannot be passed to native code by address.
-   Options: copy at the boundary (costly for large arrays), keep a small JNI
-   shim just for this path, or move the data off-heap
-   (direct `ByteBuffer` / native `MemorySegment`), which changes the Java-side
-   contract. Deephaven's numpy interop leans on this path, so this is the one
-   real design problem in the rewrite.
+   For Deephaven this path is load-bearing and permanent: primitive columnar
+   data lives in heap arrays, and vectorized UDF calls wrap those chunks as
+   numpy arrays zero-copy. So the answer is a small (~150-line) JNI shim
+   (pin/unpin via GetPrimitiveArrayCritical), shipped inside the jar.
+   Copying is not an alternative — not for speed (a 16KB chunk memcpy is
+   ~0.1 ns/row, invisible next to the measured 305 ns/row vectorized cost)
+   but for semantics: numpy writes through the buffer must mutate the real
+   Java array, and a drop-in cannot break that aliasing. Risk profile is
+   mild: engine pins are short-lived (one UDF call per chunk), and the
+   required JDK 22+ brings G1 region pinning (JEP 423), so a pinned chunk no
+   longer stalls GC the way long-held critical regions did on JDK 11.
+   Long-lived pins remain possible via user-held jpy.array views — same as
+   today. Watch item: if the JDK ever retires critical regions, the fallback
+   for Deephaven is not "copy and accept it" but a rethink of how Python
+   vectorization reaches columnar data.
 
 Everything else — all 58 `PyLib` natives and the whole Python-facing extension
 module — maps onto FFM downcalls and upcall stubs.
