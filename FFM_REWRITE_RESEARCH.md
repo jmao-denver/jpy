@@ -1,5 +1,13 @@
 # Research: rewriting jpy with the Java FFM API (Java 22+)
 
+**Scope decision (2026-09-30): the FFM drop-in targets CPython 3.12+ only.**
+3.12 is where PyType_FromSpec gained buffer slots and PyType_FromMetaclass
+appeared, so a 3.12 floor keeps the whole implementation functions-only: no
+per-version struct layouts, no PyErr_Fetch legacy path, no version dispatch.
+This cuts roughly a quarter of the estimated effort and most of the ABI risk;
+the supported set becomes 3.12, 3.13(+t), 3.14(+t). Sections below that
+discuss 3.9-3.11 workarounds are kept for the record but are out of scope.
+
 Date: 2026-09-29. Based on the current source in this repo.
 
 ## TL;DR
