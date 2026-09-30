@@ -8,6 +8,20 @@ This cuts roughly a quarter of the estimated effort and most of the ABI risk;
 the supported set becomes 3.12, 3.13(+t), 3.14(+t). Sections below that
 discuss 3.9-3.11 workarounds are kept for the record but are out of scope.
 
+**Scope decision (2026-09-30): statically linked Pythons are unsupported.**
+A shared libpython is required in both start modes — the same requirement
+Java-first jpy has today (Deephaven already tells pyenv users to build with
+--enable-shared). This drops the dlsym(RTLD_DEFAULT)/GetProcAddress symbol
+fallback from the plan: one FFM libraryLookup path everywhere. Note this is
+a small regression vs today's Python-first mode, where the C extension works
+with static Pythons for free; accepted deliberately.
+
+**Distribution shape**: one pure-Python py3-none-any wheel (the ctypes loader
+plus the jar as package data). If the heap-array JNI shim is kept, its
+per-platform libraries ride inside the jar (extracted and System.load-ed at
+runtime, sqlite-jdbc style), keeping the wheel universal. Binary Python
+extensions: zero.
+
 Date: 2026-09-29. Based on the current source in this repo.
 
 ## TL;DR
