@@ -38,58 +38,66 @@ public final class Py {
     }
 
     // ---- downcall handles ----
-    static final MethodHandle Py_InitializeEx = dc("Py_InitializeEx", FunctionDescriptor.ofVoid(JAVA_INT));
-    static final MethodHandle Py_FinalizeEx = dc("Py_FinalizeEx", FunctionDescriptor.of(JAVA_INT));
-    static final MethodHandle Py_IsInitialized = dc("Py_IsInitialized", FunctionDescriptor.of(JAVA_INT));
-    static final MethodHandle Py_GetVersion = dc("Py_GetVersion", FunctionDescriptor.of(ADDRESS));
-    static final MethodHandle PyEval_SaveThread = dc("PyEval_SaveThread", FunctionDescriptor.of(ADDRESS));
-    static final MethodHandle PyEval_RestoreThread = dc("PyEval_RestoreThread", FunctionDescriptor.ofVoid(ADDRESS));
-    static final MethodHandle PyGILState_Ensure = dc("PyGILState_Ensure", FunctionDescriptor.of(JAVA_INT));
-    static final MethodHandle PyGILState_Release = dc("PyGILState_Release", FunctionDescriptor.ofVoid(JAVA_INT));
+    public static final MethodHandle Py_InitializeEx = dc("Py_InitializeEx", FunctionDescriptor.ofVoid(JAVA_INT));
+    public static final MethodHandle Py_FinalizeEx = dc("Py_FinalizeEx", FunctionDescriptor.of(JAVA_INT));
+    public static final MethodHandle Py_IsInitialized = dc("Py_IsInitialized", FunctionDescriptor.of(JAVA_INT));
+    public static final MethodHandle Py_GetVersion = dc("Py_GetVersion", FunctionDescriptor.of(ADDRESS));
+    public static final MethodHandle PyEval_SaveThread = dc("PyEval_SaveThread", FunctionDescriptor.of(ADDRESS));
+    public static final MethodHandle PyEval_RestoreThread = dc("PyEval_RestoreThread", FunctionDescriptor.ofVoid(ADDRESS));
+    public static final MethodHandle PyGILState_Ensure = dc("PyGILState_Ensure", FunctionDescriptor.of(JAVA_INT));
+    public static final MethodHandle PyGILState_Release = dc("PyGILState_Release", FunctionDescriptor.ofVoid(JAVA_INT));
 
-    static final MethodHandle PyRun_SimpleString = dc("PyRun_SimpleString", FunctionDescriptor.of(JAVA_INT, ADDRESS));
-    static final MethodHandle PyRun_String = dc("PyRun_String",
+    public static final MethodHandle PyRun_SimpleString = dc("PyRun_SimpleString", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    public static final MethodHandle PyRun_String = dc("PyRun_String",
             FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT, ADDRESS, ADDRESS));
 
-    static final MethodHandle Py_IncRef = dc("Py_IncRef", FunctionDescriptor.ofVoid(ADDRESS));
-    static final MethodHandle Py_DecRef = dc("Py_DecRef", FunctionDescriptor.ofVoid(ADDRESS));
+    public static final MethodHandle Py_IncRef = dc("Py_IncRef", FunctionDescriptor.ofVoid(ADDRESS));
+    public static final MethodHandle Py_DecRef = dc("Py_DecRef", FunctionDescriptor.ofVoid(ADDRESS));
 
-    static final MethodHandle PyImport_ImportModule = dc("PyImport_ImportModule", FunctionDescriptor.of(ADDRESS, ADDRESS));
-    static final MethodHandle PyImport_AddModule = dc("PyImport_AddModule", FunctionDescriptor.of(ADDRESS, ADDRESS));
-    static final MethodHandle PyModule_GetDict = dc("PyModule_GetDict", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    public static final MethodHandle PyImport_ImportModule = dc("PyImport_ImportModule", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    public static final MethodHandle PyImport_AddModule = dc("PyImport_AddModule", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    public static final MethodHandle PyModule_GetDict = dc("PyModule_GetDict", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
-    static final MethodHandle PyObject_GetAttrString = dc("PyObject_GetAttrString", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
-    static final MethodHandle PyObject_SetAttrString = dc("PyObject_SetAttrString", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
-    static final MethodHandle PyObject_CallObject = dc("PyObject_CallObject", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
-    static final MethodHandle PyObject_Str = dc("PyObject_Str", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    public static final MethodHandle PyObject_GetAttrString = dc("PyObject_GetAttrString", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
+    public static final MethodHandle PyObject_SetAttrString = dc("PyObject_SetAttrString", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+    public static final MethodHandle PyObject_CallObject = dc("PyObject_CallObject", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
+    public static final MethodHandle PyObject_Str = dc("PyObject_Str", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
-    static final MethodHandle PyUnicode_FromString = dc("PyUnicode_FromString", FunctionDescriptor.of(ADDRESS, ADDRESS));
-    static final MethodHandle PyUnicode_AsUTF8 = dc("PyUnicode_AsUTF8", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    public static final MethodHandle PyUnicode_FromString = dc("PyUnicode_FromString", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    public static final MethodHandle PyUnicode_AsUTF8 = dc("PyUnicode_AsUTF8", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
-    static final MethodHandle PyLong_FromLong = dc("PyLong_FromLong", FunctionDescriptor.of(ADDRESS, JAVA_LONG));
-    static final MethodHandle PyLong_AsLong = dc("PyLong_AsLong", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
-    static final MethodHandle PyFloat_AsDouble = dc("PyFloat_AsDouble", FunctionDescriptor.of(JAVA_DOUBLE, ADDRESS));
+    public static final MethodHandle PyLong_FromLong = dc("PyLong_FromLong", FunctionDescriptor.of(ADDRESS, JAVA_LONG));
+    public static final MethodHandle PyLong_AsLong = dc("PyLong_AsLong", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
+    public static final MethodHandle PyFloat_AsDouble = dc("PyFloat_AsDouble", FunctionDescriptor.of(JAVA_DOUBLE, ADDRESS));
 
-    static final MethodHandle PyTuple_New = dc("PyTuple_New", FunctionDescriptor.of(ADDRESS, JAVA_LONG));
-    static final MethodHandle PyTuple_SetItem = dc("PyTuple_SetItem", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG, ADDRESS));
-    static final MethodHandle PyTuple_GetItem = dc("PyTuple_GetItem", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
-    static final MethodHandle PyTuple_Size = dc("PyTuple_Size", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
+    public static final MethodHandle PyTuple_New = dc("PyTuple_New", FunctionDescriptor.of(ADDRESS, JAVA_LONG));
+    public static final MethodHandle PyTuple_SetItem = dc("PyTuple_SetItem", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG, ADDRESS));
+    public static final MethodHandle PyTuple_GetItem = dc("PyTuple_GetItem", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
+    public static final MethodHandle PyTuple_Size = dc("PyTuple_Size", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
 
-    static final MethodHandle PyObject_Type = dc("PyObject_Type", FunctionDescriptor.of(ADDRESS, ADDRESS));
-    static final MethodHandle PyObject_IsInstance = dc("PyObject_IsInstance", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
-    static final MethodHandle PyObject_IsTrue = dc("PyObject_IsTrue", FunctionDescriptor.of(JAVA_INT, ADDRESS));
-    static final MethodHandle PyLong_AsLongLong = dc("PyLong_AsLongLong", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
-    static final MethodHandle PyBytes_Size = dc("PyBytes_Size", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
-    static final MethodHandle PyBytes_AsString = dc("PyBytes_AsString", FunctionDescriptor.of(ADDRESS, ADDRESS));
-    static final MethodHandle PyList_Size = dc("PyList_Size", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
-    static final MethodHandle PyList_GetItem = dc("PyList_GetItem", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
-    static final MethodHandle PyDict_Items = dc("PyDict_Items", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    public static final MethodHandle PyObject_Type = dc("PyObject_Type", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    public static final MethodHandle PyObject_IsInstance = dc("PyObject_IsInstance", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    public static final MethodHandle PyObject_IsTrue = dc("PyObject_IsTrue", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    public static final MethodHandle PyLong_AsLongLong = dc("PyLong_AsLongLong", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
+    public static final MethodHandle PyBytes_Size = dc("PyBytes_Size", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
+    public static final MethodHandle PyBytes_AsString = dc("PyBytes_AsString", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    public static final MethodHandle PyList_Size = dc("PyList_Size", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
+    public static final MethodHandle PyList_GetItem = dc("PyList_GetItem", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
+    public static final MethodHandle PyDict_Items = dc("PyDict_Items", FunctionDescriptor.of(ADDRESS, ADDRESS));
+
+    public static final MethodHandle PyBool_FromLong = dc("PyBool_FromLong", FunctionDescriptor.of(ADDRESS, JAVA_LONG));
+    public static final MethodHandle PyFloat_FromDouble = dc("PyFloat_FromDouble", FunctionDescriptor.of(ADDRESS, JAVA_DOUBLE));
+    public static final MethodHandle PySequence_Check = dc("PySequence_Check", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    public static final MethodHandle PySequence_Size = dc("PySequence_Size", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
+    public static final MethodHandle PySequence_GetItem = dc("PySequence_GetItem", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
 
     /** Exported type-object / singleton data symbols: the symbol IS the object. */
     static MemorySegment sym(String name) {
         return LIB.find(name).orElseThrow(() -> new UnsatisfiedLinkError("no symbol " + name));
     }
     public static final MemorySegment Py_None = sym("_Py_NoneStruct");
+    public static final MemorySegment Py_True = sym("_Py_TrueStruct");
+    public static final MemorySegment Py_False = sym("_Py_FalseStruct");
     public static final MemorySegment PyBool_Type = sym("PyBool_Type");
     public static final MemorySegment PyLong_Type = sym("PyLong_Type");
     public static final MemorySegment PyFloat_Type = sym("PyFloat_Type");
@@ -99,14 +107,14 @@ public final class Py {
     public static final MemorySegment PyTuple_Type = sym("PyTuple_Type");
     public static final MemorySegment PyDict_Type = sym("PyDict_Type");
 
-    static final MethodHandle PyErr_Occurred = dc("PyErr_Occurred", FunctionDescriptor.of(ADDRESS));
-    static final MethodHandle PyErr_Clear = dc("PyErr_Clear", FunctionDescriptor.ofVoid());
-    static final MethodHandle PyErr_Print = dc("PyErr_Print", FunctionDescriptor.ofVoid());
-    static final MethodHandle PyErr_SetString = dc("PyErr_SetString", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
-    static final MethodHandle PyErr_GetRaisedException = dc("PyErr_GetRaisedException", FunctionDescriptor.of(ADDRESS));
+    public static final MethodHandle PyErr_Occurred = dc("PyErr_Occurred", FunctionDescriptor.of(ADDRESS));
+    public static final MethodHandle PyErr_Clear = dc("PyErr_Clear", FunctionDescriptor.ofVoid());
+    public static final MethodHandle PyErr_Print = dc("PyErr_Print", FunctionDescriptor.ofVoid());
+    public static final MethodHandle PyErr_SetString = dc("PyErr_SetString", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
+    public static final MethodHandle PyErr_GetRaisedException = dc("PyErr_GetRaisedException", FunctionDescriptor.of(ADDRESS));
 
-    static final MethodHandle PyCFunction_NewEx = dc("PyCFunction_NewEx", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, ADDRESS));
-    static final MethodHandle PyType_FromSpec = dc("PyType_FromSpec", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    public static final MethodHandle PyCFunction_NewEx = dc("PyCFunction_NewEx", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+    public static final MethodHandle PyType_FromSpec = dc("PyType_FromSpec", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
     /** PyExc_RuntimeError is a global PyObject* variable: the symbol is the address of the pointer. */
     public static final MemorySegment PyExc_RuntimeError =
@@ -119,7 +127,7 @@ public final class Py {
         public PyException(String msg) { super(msg); }
     }
 
-    static RuntimeException sneaky(Throwable t) {
+    public static RuntimeException sneaky(Throwable t) {
         return t instanceof RuntimeException r ? r : new RuntimeException(t);
     }
 
@@ -146,7 +154,7 @@ public final class Py {
         }
     }
 
-    static MemorySegment utf8(MemorySegment unicode) throws Throwable {
+    public static MemorySegment utf8(MemorySegment unicode) throws Throwable {
         MemorySegment p = (MemorySegment) PyUnicode_AsUTF8.invokeExact(unicode);
         if (p.equals(NULL)) throw fetchError();
         return p;
