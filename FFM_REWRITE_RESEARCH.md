@@ -144,21 +144,23 @@ but these".
    primitive array to Python's buffer protocol without copying (numpy can wrap
    it directly). FFM cannot produce a native address for an on-heap Java
    array; heap `MemorySegment`s cannot be passed to native code by address.
-   For Deephaven this path is load-bearing and permanent: primitive columnar
-   data lives in heap arrays, and vectorized UDF calls wrap those chunks as
-   numpy arrays zero-copy. So the answer is a small (~150-line) JNI shim
-   (pin/unpin via GetPrimitiveArrayCritical), shipped inside the jar.
-   Copying is not an alternative — not for speed (a 16KB chunk memcpy is
-   ~0.1 ns/row, invisible next to the measured 305 ns/row vectorized cost)
-   but for semantics: numpy writes through the buffer must mutate the real
-   Java array, and a drop-in cannot break that aliasing. Risk profile is
-   mild: engine pins are short-lived (one UDF call per chunk), and the
-   required JDK 22+ brings G1 region pinning (JEP 423), so a pinned chunk no
-   longer stalls GC the way long-held critical regions did on JDK 11.
-   Long-lived pins remain possible via user-held jpy.array views — same as
-   today. Watch item: if the JDK ever retires critical regions, the fallback
-   for Deephaven is not "copy and accept it" but a rethink of how Python
-   vectorization reaches columnar data.
+   For Deephaven this path is load-bearing (verified in source): the engine
+   copies each chunk into reusable heap scratch arrays
+   (FillContextPython.java: sourceChunks[i].copyToArray(...)) plus a return
+   array, and Python wraps those zero-copy via np.frombuffer(j_array)
+   (jcompat.py) — jpy's buffer protocol, GetPrimitiveArrayCritical
+   underneath. Results flow back by numpy writing into the Java return
+   array, so the aliasing is semantic, not an optimization: a drop-in must
+   keep it. Hence the ~150-line JNI pin/unpin shim, shipped inside the jar.
+   Risk profile is mild: engine pins are short-lived (one UDF call per
+   chunk), and the required JDK 22+ brings G1 region pinning (JEP 423), so
+   pinned chunks no longer stall GC as on JDK 11. Long-lived pins remain
+   possible via user-held jpy.array views — same as today.
+   Longer term, the vectorized path could go shim-free with a localized
+   engine change: the data is already copied once into scratch arrays, so
+   allocating that scratch off-heap (MemorySegment) costs the same copy and
+   lets numpy wrap native memory with no pin at all. The shim would then
+   serve only user-held jpy.array views over real column arrays.
 
 Everything else — all 58 `PyLib` natives and the whole Python-facing extension
 module — maps onto FFM downcalls and upcall stubs.
