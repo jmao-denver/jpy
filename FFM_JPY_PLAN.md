@@ -69,6 +69,14 @@ static tables): scalar Python UDF costs 1916 ns/row of which ~1878 ns
 (98%) is bridge+boxing; the Python body itself is 36 ns. Auto-vectorized:
 305 ns/row, almost no per-row crossings.
 
+Free-threaded comparison (same 3.13.9t interpreter, GIL off): single-thread
+deltas match the GIL-build ratios (P->J 333 ns JNI vs 99 ns FFM; J->P 1310
+vs 79). At 4 Python threads both bridges hit the identical ~5.6 Mcalls/s
+ceiling — free-threaded CPython's own refcount contention, not the bridge —
+so bridge choice is irrelevant to FT scalability. 4 Java threads calling
+Python scaled ~1.7x, which a GIL build cannot do. The FFM prototype ran on
+3.13t with zero code changes.
+
 ## Performance ROI (honest version)
 
 - Scalar per-row Python UDFs: projected **4-6x** (landing zone
@@ -108,7 +116,9 @@ two focused attempts are skipped and listed, not hidden.
   design surprises; the back half is mechanical.
 - **Free-threaded Python** (session 8 tail) may end in "conclusive failure
   with findings" — a legitimate outcome, mirrored by the JNI jpy's own
-  recent free-threading work.
+  recent free-threading work. Partially de-risked: the prototype already
+  runs on 3.13t unchanged, though the full type system will face real
+  concurrency questions the prototype does not.
 - **Dual-track overhead**: maintaining both implementations during the
   overlap raises total burden before the matrix savings cash in.
 - **Platform risk**: if the JDK ever retires JNI critical regions, the shim
