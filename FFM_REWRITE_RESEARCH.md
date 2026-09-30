@@ -251,6 +251,62 @@ Net: parity to ~10-30% better on chatty per-call paths, no change to
 chunked/vectorized throughput, contingent on FASTCALL and the array shim.
 Forecast only; the spike's benchmarks are the test.
 
+## Drop-in plan and re-estimate (2026-09-30, for CPython 3.12+ only)
+
+"Drop-in" means jpy's own test suites (24 Python test files, 11 Java test
+classes) pass unmodified against the FFM build.
+
+Already banked by the prototype: bindings, GIL guard, exception translation,
+upcalls (functions and type slots), both bootstraps, conversion parity (M8),
+benchmarks. Direct ByteBuffers are fully covered by FFM
+(MemorySegment.ofBuffer, zero-copy both ways), so the JNI shim question is
+confined to Java HEAP arrays only; steering hot numpy paths toward direct
+buffers / native MemorySegments shrinks it further.
+
+| Component | Weeks |
+|---|---|
+| Type system (get_type, bases, constructors, fields, cache) | 3-4 |
+| Overload resolution + conversion integration | 2-3 |
+| Java-side PyObject lifecycle (references, cleanup thread, shutdown) | 1-1.5 |
+| Arrays + buffer protocol (spec slots legal on 3.12+; heap-array shim optional) | 2 |
+| Proxies | 1 |
+| Remaining PyLib natives + jpy.cast/convert/diag/translation | 1.5-2 |
+| Bootstrap productization (jpyutil compat, Linux/Windows discovery) | 1-1.5 |
+| jsr223 | 0.5 |
+| Test convergence, free-threaded (3.13t/3.14t), platform matrix | 3-4 |
+| **Total** | **15-19 weeks (~3-4.5 months)** |
+
+The 3.12+ floor deleted version dispatch and buffer-slot struct poking (was
+3-6 months with 3.9-3.11). The bulk was always the type system, overload
+matching, and bug-for-bug test convergence; that part did not move.
+
+### Hands-off (agent-run) execution plan
+
+Each session is prototype-sized (hours, single-digit-to-low-tens of millions
+of tokens), ends with committed code and a pass/fail verdict defined by jpy's
+own tests, never by judgment:
+
+1. jpy_gettype_test.py — type system core. Ends with a design note the
+   reviewer can veto before session 2 (the one decision with a long shadow:
+   how Java-class metadata maps onto Python type objects).
+2. jpy_obj_test.py + jpy_field_test.py — instances, methods, fields
+3. jpy_overload_test.py + jpy_typeres_test.py — overload matching
+4. jpy_typeconv_test.py + jpy_retval_test.py — conversions wired into calls
+5. jpy_array_test.py — arrays + buffer protocol
+6. Java side: PyObjectTest, PyModuleTest, lifecycle/cleanup tests
+7. PyProxyTest + exception/translation tests
+8. Full both-suite sweep on 3.12, then 3.13/3.14, then 3.13t/3.14t
+9. Linux (needs a Linux box or CI)
+
+Overall: order of 50-150M tokens across ~9 sessions, 2-4 calendar weeks at
+whatever launch pace, ~10 minutes of human review per session.
+
+Known frays and their mitigations: cross-session drift (the repo, this doc,
+and the tests are the memory); test-convergence rabbit holes (a test that
+resists two focused attempts is skipped and listed in the session report, not
+hidden); free-threaded Python may legitimately end in "conclusive failure
+with findings".
+
 ## Alternatives considered
 
 - **Keep JNI, modernize the C**: cheapest, keeps all current costs.
