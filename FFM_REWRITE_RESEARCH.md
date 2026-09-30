@@ -280,6 +280,23 @@ ROI = (ns saved per crossing) x (crossings per second in real workloads):
 4. **Barrage / data plane**: no jpy crossings at all. Zero.
 5. **Interactive scripting (Python driving Java)**: human-scale. Imperceptible.
 
+**Real-engine measurement** (embedded Deephaven server 43.0-snapshot, JDK 21,
+CPython 3.12, Apple M-series; `update` on 10M/2M-row static tables, best of 3):
+
+| path | per row |
+|---|---|
+| Java formula `X + 1` | 2 ns |
+| Python UDF `f(X)`, auto-vectorized | 305 ns |
+| Python UDF `f(X) + 0`, forced scalar | 1916 ns |
+| the Python body `f(1)` alone | 36 ns |
+
+On the scalar path, bridge+boxing overhead is ~1878 ns/row — 98% of the cost
+(the measured 1447 ns PyObject.call crossing plus engine-side boxing). FFM
+projection: crossing ~100 ns, engine-side prep remains, landing zone
+~300-500 ns/row = **4-6x on scalar UDFs with trivial bodies** (2x with a 1 us
+body, ~8% with 10 us). The vectorized path's 305 ns/row is chunk marshaling
+and numpy with almost no per-row crossings; FFM barely moves it.
+
 The GIL, not the bridge, remains the ceiling for Python-heavy workloads, and
 FFM does nothing about it (free-threaded support is orthogonal work in either
 implementation).
