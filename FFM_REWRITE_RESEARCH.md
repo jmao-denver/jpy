@@ -337,6 +337,15 @@ The GIL, not the bridge, remains the ceiling for Python-heavy workloads, and
 FFM does nothing about it (free-threaded support is orthogonal work in either
 implementation).
 
+**Free-threaded comparison** (same 3.13.9t interpreter, GIL off, M9 vs
+bench/jpy_ft_bench.py): single-thread deltas match the GIL-build ratios
+(P->J 333 ns JNI vs 99 ns FFM; J->P 1310 vs 79). At 4 Python threads both
+bridges hit the identical ~5.6 Mcalls/s ceiling — free-threaded CPython's
+own refcount contention on shared objects, not the bridge — so bridge choice
+is irrelevant to FT scalability. One positive: 4 Java threads calling
+Python scaled ~1.7x (21.5 Mcalls/s), which a GIL build cannot do. The FFM
+prototype ran on 3.13t with zero code changes.
+
 **Conclusion: performance alone does not pay for 15-19 weeks.** The honest
 case for the rewrite is maintenance and risk (delete ~18k lines of C, collapse
 the ~38-wheel build matrix, convert segfault-class bugs into exceptions),
