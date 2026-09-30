@@ -392,7 +392,7 @@ own tests, never by judgment:
 6. Java side: PyObjectTest, PyModuleTest, lifecycle/cleanup tests
 7. PyProxyTest + exception/translation tests
 8. Full both-suite sweep on 3.12, then 3.13/3.14, then 3.13t/3.14t
-9. Linux (needs a Linux box or CI)
+9. Linux and Windows (loader, libpython discovery, shim build are untested off macOS; needs boxes or CI)
 
 Overall: order of 50-150M tokens across ~9 sessions, 2-4 calendar weeks at
 whatever launch pace, ~10 minutes of human review per session.

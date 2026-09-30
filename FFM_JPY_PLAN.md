@@ -97,7 +97,7 @@ two focused attempts are skipped and listed, not hidden.
 6. **Java-side lifecycle** — `PyObjectTest`, `PyModuleTest`, cleanup/reachability
 7. **Proxies + exception translation** — `PyProxyTest`, exception tests
 8. **Full sweep** — both suites on 3.12, then 3.13/3.14, then 3.13t/3.14t
-9. **Linux** — needs a Linux box or CI access
+9. **Linux and Windows** — the loader (jvm.dll via ctypes), libpython discovery, and the shim build are untested off macOS; needs Linux/Windows boxes or CI
 
 ## Cost and risks
 
