@@ -251,6 +251,49 @@ Net: parity to ~10-30% better on chatty per-call paths, no change to
 chunked/vectorized throughput, contingent on FASTCALL and the array shim.
 Forecast only; the spike's benchmarks are the test.
 
+## Performance-only ROI (2026-09-30)
+
+Measured per-crossing costs (Apple M-series, JDK 25 / CPython 3.12.12; trivial
+function bodies, 1-2 args):
+
+| direction | JNI jpy today | FFM prototype | saving |
+|---|---|---|---|
+| Python -> Java call | ~409 ns | ~106 ns | ~300 ns (≈4x) |
+| Java -> Python call | ~1447 ns (PyObject.call("__call__", x)) | ~71-93 ns (held callable) | up to ~1.35 us (≈15x) |
+
+Caveats: the FFM Python->Java number has no overload matching yet (it is the
+floor); and part of the Java->Python gap is jpy's API design (per-call
+"__call__" name lookup, wrapper churn), which FFM enables us to skip but which
+a targeted JNI-jpy optimization could also partially recover.
+
+ROI = (ns saved per crossing) x (crossings per second in real workloads):
+
+1. **Vectorized / chunked Python UDFs** (the recommended Deephaven pattern):
+   one crossing per chunk of ~4096 rows -> saving ~0.3 ns/row. **ROI ~ zero.**
+2. **Scalar per-row Python UDFs** (non-vectorized update/where): one crossing
+   per row. Today's ~1.4 us bridge overhead often rivals the Python body
+   itself (0.5-5 us). Saving ~1.3 us/row is a **20-70% throughput gain on
+   this path** (10M rows: ~14 s of bridge overhead -> ~1 s). But this is the
+   path users are already steered away from.
+3. **Listeners / callbacks per update cycle**: 100s-1000s of crossings/sec ->
+   microseconds saved per second. Noise.
+4. **Barrage / data plane**: no jpy crossings at all. Zero.
+5. **Interactive scripting (Python driving Java)**: human-scale. Imperceptible.
+
+The GIL, not the bridge, remains the ceiling for Python-heavy workloads, and
+FFM does nothing about it (free-threaded support is orthogonal work in either
+implementation).
+
+**Conclusion: performance alone does not pay for 15-19 weeks.** The honest
+case for the rewrite is maintenance and risk (delete ~18k lines of C, collapse
+the ~38-wheel build matrix, convert segfault-class bugs into exceptions),
+platform strategy (JNI is being progressively restricted; FFM is the
+supported path), and free-threading readiness — with the per-call speedups as
+a bonus that materially helps only scalar-UDF-heavy users. If per-call
+overhead is the immediate pain, a cheaper targeted fix exists: optimize the
+JNI jpy call path (cache the callable, skip the name lookup) for a fraction
+of the cost.
+
 ## Drop-in plan and re-estimate (2026-09-30, for CPython 3.12+ only)
 
 "Drop-in" means jpy's own test suites (24 Python test files, 11 Java test
