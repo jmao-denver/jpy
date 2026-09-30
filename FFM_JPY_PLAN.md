@@ -25,30 +25,31 @@ that is a drop-in for the current JNI jpy:
 
 ## Architecture
 
-~95% Java. Two small JNI survivors, both spec-stable:
+All Java and Python, with no compiled code. Two pieces still go through JNI,
+reached from Python with ctypes or from Java with FFM:
 
-1. **Python-first bootstrap**: a ~100-line pure-Python ctypes loader calls
-   `JNI_CreateJavaVM` and hands off; Java then registers the `jpy` module
-   into the running interpreter via FFM. No compiled Python extension.
-2. **Array-pinning shim** (~150 lines of JNI, shipped inside the jar):
-   FFM cannot produce a stable pointer to a Java heap array, and the
-   vectorized-UDF path needs exactly that — verified in deephaven-core
-   source: the engine copies chunks into heap scratch arrays
-   (`FillContextPython.copyToArray`) which Python wraps zero-copy
-   (`np.frombuffer`) and writes results back through. The aliasing is
-   semantic; a drop-in must keep it. Pins are short-lived (one UDF call per
-   chunk) and JDK 22's G1 region pinning (JEP 423) makes them benign.
-   Long term, allocating that scratch off-heap (`MemorySegment`) removes the
-   pin entirely with a localized engine change.
+1. **Python-first bootstrap**: a pure-Python loader calls
+   `JNI_CreateJavaVM` through ctypes. Java then adds the bridge to the
+   running `jpy` module through FFM. No compiled Python extension.
+2. **Heap-array pinning**: jpy exposes Java primitive arrays to Python
+   through the buffer protocol, zero-copy. Every jpy user doing
+   `np.frombuffer(java_array)` or `memoryview(java_array)` relies on this,
+   and writes through the view land in the Java array. FFM alone cannot
+   give a stable pointer to a Java heap array. Copying instead is slower for
+   large arrays and breaks write-through for every user, so pinning is a
+   core jpy feature, not a Deephaven detail. Deephaven's vectorized UDFs are
+   the heaviest user (verified in deephaven-core source): the engine copies
+   chunks into heap scratch arrays (`FillContextPython.copyToArray`), Python
+   wraps them with `np.frombuffer`, and results come back through numpy
+   writing into the Java return array.
 
-**Update: the pinning shim needs no compiled C.** FFM can call JNI's own
-function table directly: a Java registry method returns the array as a
-jobject through `CallStaticObjectMethodA`, and `GetPrimitiveArrayCritical`
-pins it, all as FFM downcalls. Measured in `ffm-prototype/src/ffm/M10.java`:
-in-place pin, stable across a full GC, 761 ns per pin+unpin (0.19 ns/row per
-4096-row chunk), 10/10 clean runs. It works outside what the JNI spec
-describes (JNI assumes native method frames), so it depends on two rules
-recorded in the research doc and on HotSpot behavior staying as it is.
+   **It needs no compiled shim.** FFM can call JNI's own function table
+   directly: a Java registry method returns the array as a jobject through
+   `CallStaticObjectMethodA`, and `GetPrimitiveArrayCritical` pins it, all
+   as FFM downcalls. Measured in `ffm-prototype/src/ffm/M10.java`: in-place
+   pin, stable across a full GC, 761 ns per pin+unpin (0.19 ns/row per
+   4096-row chunk), 10/10 clean runs. JDK 22's G1 region pinning (JEP 423)
+   means pinned arrays no longer stall the GC.
 
 **Distribution**: one pure-Python `py3-none-any` wheel (loader + jar as
 package data) instead of today's ~38 binary wheels. Zero compiled code of
@@ -135,8 +136,16 @@ two focused attempts are skipped and listed, not hidden.
   concurrency questions the prototype does not.
 - **Dual-track overhead**: maintaining both implementations during the
   overlap raises total burden before the matrix savings cash in.
-- **Platform risk**: if the JDK ever retires JNI critical regions, the shim
-  needs the off-heap-scratch engine change described above.
+- **Pinning risk**: calling JNI from inside an FFM call is outside what the
+  JNI spec describes (it assumes classic native methods). It works on
+  HotSpot/JDK 25 only with two rules, both learned from crashes: bootstrap
+  application classes through `ClassLoader.getSystemClassLoader()`, and make
+  every JNI handle permanent in the very next call, since any Java code
+  running invalidates temporary handles. If a future JDK breaks this, the
+  fallback is a small compiled JNI library inside the jar (per platform).
+  Copying is not a real fallback: it breaks write-through for every jpy
+  user. Deephaven could move its scratch arrays off-heap to avoid pinning on
+  its hot path, but that does not help other jpy users.
 
 ## Decision requested
 

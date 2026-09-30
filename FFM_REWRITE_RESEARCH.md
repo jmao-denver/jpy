@@ -154,7 +154,11 @@ but these".
    primitive array to Python's buffer protocol without copying (numpy can wrap
    it directly). FFM cannot produce a native address for an on-heap Java
    array; heap `MemorySegment`s cannot be passed to native code by address.
-   For Deephaven this path is load-bearing (verified in source): the engine
+   This is a core jpy feature, not a Deephaven detail: any user doing
+   `np.frombuffer(java_array)` or `memoryview(java_array)` gets a zero-copy,
+   write-through view, and always copying would be slower for large arrays
+   and would silently break write-through for everyone.
+   Deephaven is the heaviest user (verified in source): the engine
    copies each chunk into reusable heap scratch arrays
    (FillContextPython.java: sourceChunks[i].copyToArray(...)) plus a return
    array, and Python wraps those zero-copy via np.frombuffer(j_array)
