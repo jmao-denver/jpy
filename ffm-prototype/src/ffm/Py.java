@@ -75,6 +75,30 @@ public final class Py {
     static final MethodHandle PyTuple_GetItem = dc("PyTuple_GetItem", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
     static final MethodHandle PyTuple_Size = dc("PyTuple_Size", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
 
+    static final MethodHandle PyObject_Type = dc("PyObject_Type", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    static final MethodHandle PyObject_IsInstance = dc("PyObject_IsInstance", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    static final MethodHandle PyObject_IsTrue = dc("PyObject_IsTrue", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    static final MethodHandle PyLong_AsLongLong = dc("PyLong_AsLongLong", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
+    static final MethodHandle PyBytes_Size = dc("PyBytes_Size", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
+    static final MethodHandle PyBytes_AsString = dc("PyBytes_AsString", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    static final MethodHandle PyList_Size = dc("PyList_Size", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
+    static final MethodHandle PyList_GetItem = dc("PyList_GetItem", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
+    static final MethodHandle PyDict_Items = dc("PyDict_Items", FunctionDescriptor.of(ADDRESS, ADDRESS));
+
+    /** Exported type-object / singleton data symbols: the symbol IS the object. */
+    static MemorySegment sym(String name) {
+        return LIB.find(name).orElseThrow(() -> new UnsatisfiedLinkError("no symbol " + name));
+    }
+    public static final MemorySegment Py_None = sym("_Py_NoneStruct");
+    public static final MemorySegment PyBool_Type = sym("PyBool_Type");
+    public static final MemorySegment PyLong_Type = sym("PyLong_Type");
+    public static final MemorySegment PyFloat_Type = sym("PyFloat_Type");
+    public static final MemorySegment PyUnicode_Type = sym("PyUnicode_Type");
+    public static final MemorySegment PyBytes_Type = sym("PyBytes_Type");
+    public static final MemorySegment PyList_Type = sym("PyList_Type");
+    public static final MemorySegment PyTuple_Type = sym("PyTuple_Type");
+    public static final MemorySegment PyDict_Type = sym("PyDict_Type");
+
     static final MethodHandle PyErr_Occurred = dc("PyErr_Occurred", FunctionDescriptor.of(ADDRESS));
     static final MethodHandle PyErr_Clear = dc("PyErr_Clear", FunctionDescriptor.ofVoid());
     static final MethodHandle PyErr_Print = dc("PyErr_Print", FunctionDescriptor.ofVoid());
