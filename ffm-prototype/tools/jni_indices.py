@@ -3,8 +3,8 @@ import re
 src = open('/Users/jianfengmao/.sdkman/candidates/java/25.0.3-tem/include/jni.h').read()
 body = re.search(r'struct JNINativeInterface_ \{(.*?)\n\};', src, re.S).group(1)
 idx = 0
-wanted = {'FindClass', 'GetStaticMethodID', 'CallStaticVoidMethodA', 'ExceptionCheck',
-          'ExceptionDescribe', 'NewStringUTF', 'CallStaticObjectMethodA'}
+wanted = {'GetMethodID', 'CallObjectMethodA', 'NewStringUTF', 'FindClass', 'GetStaticMethodID', 'CallStaticObjectMethodA', 'NewGlobalRef', 'DeleteGlobalRef', 'DeleteLocalRef', 'GetPrimitiveArrayCritical', 'ReleasePrimitiveArrayCritical', 'ExceptionCheck', 'ExceptionDescribe',
+          }
 for line in body.splitlines():
     line = line.strip()
     if line.startswith('void *reserved'):

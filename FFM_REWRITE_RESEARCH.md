@@ -171,6 +171,26 @@ but these".
    allocating that scratch off-heap (MemorySegment) costs the same copy and
    lets numpy wrap native memory with no pin at all. The shim would then
    serve only user-held jpy.array views over real column arrays.
+   **Update (2026-09-30, measured): the shim needs no compiled C.** FFM can
+   call JNI functions directly, since they are C function pointers in the
+   JNIEnv table (JNIEnv via the exported JNI_GetCreatedJavaVMs + GetEnv).
+   FFM cannot pass a Java object to native code, but a JNI call can return
+   one: CallStaticObjectMethodA on a Java `fetch(id)` registry method yields a
+   jobject, and GetPrimitiveArrayCritical on it yields the pinned address.
+   Prototype `ffm-prototype/src/ffm/M10.java`: in-place pin (isCopy false),
+   pin held across ~200 MB of allocation plus System.gc(), native write seen
+   by Java, 10/10 clean runs, 761 ns per pin+unpin (0.19 ns/row for a
+   4096-row chunk). Two rules learned the hard way (both crashed first):
+   (1) FindClass through an FFM downcall uses java.base's class loader, so
+   application classes are bootstrapped via
+   ClassLoader.getSystemClassLoader().loadClass(); (2) JNI local refs die as
+   soon as any Java code runs (including inside a JNI Call*Method), so every
+   local ref must become a global ref in the very next call, with all method
+   handles bound up front. Risk: calling JNI functions from a thread inside
+   an FFM downcall is outside what the JNI spec describes (it assumes native
+   method frames). It works on HotSpot/JDK 25 and the rules above make it
+   robust, but a future JDK could change handle-block behavior. The
+   off-heap-scratch direction below removes the dependency entirely.
    FFM does have its own heap pinning — `Linker.Option.critical(true)`
    passes a heap MemorySegment's real address to a downcall — but the pin
    lasts one downcall and upcalls are forbidden during it, so it cannot back

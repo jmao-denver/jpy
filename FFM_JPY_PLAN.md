@@ -41,10 +41,18 @@ that is a drop-in for the current JNI jpy:
    Long term, allocating that scratch off-heap (`MemorySegment`) removes the
    pin entirely with a localized engine change.
 
+**Update: the pinning shim needs no compiled C.** FFM can call JNI's own
+function table directly: a Java registry method returns the array as a
+jobject through `CallStaticObjectMethodA`, and `GetPrimitiveArrayCritical`
+pins it, all as FFM downcalls. Measured in `ffm-prototype/src/ffm/M10.java`:
+in-place pin, stable across a full GC, 761 ns per pin+unpin (0.19 ns/row per
+4096-row chunk), 10/10 clean runs. It works outside what the JNI spec
+describes (JNI assumes native method frames), so it depends on two rules
+recorded in the research doc and on HotSpot behavior staying as it is.
+
 **Distribution**: one pure-Python `py3-none-any` wheel (loader + jar as
-package data) instead of today's ~38 binary wheels. Zero compiled Python
-extensions. Per-platform shim libraries ride inside the jar
-(sqlite-jdbc style extraction).
+package data) instead of today's ~38 binary wheels. Zero compiled code of
+any kind: no Python extensions, no per-platform JNI libraries.
 
 ## Evidence so far (all committed, all green)
 
