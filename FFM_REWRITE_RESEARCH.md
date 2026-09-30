@@ -171,6 +171,12 @@ but these".
    allocating that scratch off-heap (MemorySegment) costs the same copy and
    lets numpy wrap native memory with no pin at all. The shim would then
    serve only user-held jpy.array views over real column arrays.
+   FFM does have its own heap pinning — `Linker.Option.critical(true)`
+   passes a heap MemorySegment's real address to a downcall — but the pin
+   lasts one downcall and upcalls are forbidden during it, so it cannot back
+   the buffer protocol (Python keeps the pointer and runs arbitrary code
+   while it is held). It is the right tool only for transient one-shot
+   calls on heap arrays.
 
 Everything else — all 58 `PyLib` natives and the whole Python-facing extension
 module — maps onto FFM downcalls and upcall stubs.
