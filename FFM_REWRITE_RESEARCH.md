@@ -16,6 +16,16 @@ fallback from the plan: one FFM libraryLookup path everywhere. Note this is
 a small regression vs today's Python-first mode, where the C extension works
 with static Pythons for free; accepted deliberately.
 
+**Non-Deephaven users (2026-09-30)**: Deephaven is the driving use case but
+not the only active user (jpy originates from Brockmann Consult; the ESA
+SNAP/toolbox community and other downstreams embed it, often on older
+JDK/Python stacks). Consequences: (a) the parity bar stays jpy's own full
+test suites, not the Deephaven-exercised subset; (b) the FFM jpy ships as a
+new major version alongside a maintained JNI line rather than replacing it —
+the old build matrix only retires when the JNI line does; (c) environment
+floors (JDK 22+, Python 3.12+, shared libpython) are acceptable for a new
+major version, behavioral changes are not — quirks are replicated, not fixed.
+
 **Distribution shape**: one pure-Python py3-none-any wheel (the ctypes loader
 plus the jar as package data). If the heap-array JNI shim is kept, its
 per-platform libraries ride inside the jar (extracted and System.load-ed at
