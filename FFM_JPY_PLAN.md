@@ -89,6 +89,12 @@ Python scaled ~1.7x, which a GIL build cannot do. The FFM prototype ran on
 Java exceptions, and move off JNI while the JDK progressively restricts it.
 Speedups are a bonus concentrated in the scalar-UDF path.
 
+## Status
+
+| session | result |
+|---|---|
+| 1. Type system | **done 2026-09-30**: `jpy_gettype_test.py` 8/8 on 3.12, 3.13, 3.14, 3.13t, 3.14t; design note `ffm/DESIGN.md` awaiting review |
+
 ## Execution plan: 9 hands-off agent sessions
 
 Each session ends with committed code and a pass/fail verdict defined by the
