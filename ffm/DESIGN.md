@@ -189,7 +189,8 @@ code that works on the C jpy keeps working the same way.
      `ValueError` and leaves the field unchanged. Instance-field writes keep
      the C jpy's lenient conversion for parity.
 
-   Verified by `ffm/smoke_static_fields.py` (23 checks, also on 3.14t).
+   Covered by `ffm/tests/ffm_static_fields_test.py` (13 tests, run by
+   `ffm/suite.py`; also passing on 3.14t).
 2. **Class-level access to a Java member resolves an unresolved type.** In
    the C jpy, `jpy.get_type(name, resolve=False).someStaticMethod` raises
    `AttributeError` until some instance attribute was touched. Dunder
@@ -198,11 +199,14 @@ code that works on the C jpy keeps working the same way.
 ## How to reproduce
 
 ```
-ffm/build.sh                         # compile FFM Java -> ffm/build/classes
+ffm/build.sh                         # compile FFM Java -> ffm/build/classes, FFM fixtures -> ffm/build/fixtures
 ffm/build-fixtures.sh                # jpy's Java test fixtures -> target/test-classes
 ffm/test.sh jpy_gettype_test.py      # one jpy test file, unmodified, on 3.12
 ffm/matrix.sh jpy_gettype_test.py    # same on 3.12, 3.13, 3.14, 3.13t, 3.14t
-ffm/py.sh ffm/smoke_session1.py      # 19 extra checks: calls, fields, errors, identity
-ffm/py.sh ffm/smoke_static_fields.py # 23 checks: jpy.JTypeMeta and live static fields
-<numpy-python> ffm/suite.py          # all 22 jpy Python test files, scoreboard
+<numpy-python> ffm/suite.py          # jpy's 22 test files, then the FFM extras in ffm/tests
 ```
+
+`ffm/tests/` holds unittest files for behavior only the FFM jpy has (the C
+jpy fails them by design, so they stay out of `src/test/python` while both
+implementations exist): `ffm_bridge_test.py` (identity, calls, overloads,
+fields, arrays, errors) and `ffm_static_fields_test.py` (§11).

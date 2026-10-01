@@ -1,10 +1,12 @@
 """
-Runs jpy's Python test files, unmodified, against the FFM jpy and prints a scoreboard.
+Runs jpy's Python test files, unmodified, against the FFM jpy and prints a scoreboard,
+followed by the FFM extras in ffm/tests/ (FFM-only behavior the C jpy fails by design).
 
 Each file runs in its own process (a JVM can be created once per process), with a
 timeout, from the repository root. Logs go to ffm/build/suite/<file>.log.
 
-Usage: <python-with-numpy> ffm/suite.py [test files...]   (default: setup.py's list)
+Usage: <python-with-numpy> ffm/suite.py [test files...]
+       (default: setup.py's list, then every ffm/tests/*_test.py)
 Env:   PYTHON  interpreter for the tests (default: the one running this script)
        JAVA_HOME  JDK 22+ (default: sdkman Temurin 25)
 """
@@ -31,11 +33,25 @@ DEFAULT = [
 ]
 
 
+FFM_TESTS_DIR = os.path.join('ffm', 'tests')
+
+
+def ffm_extras():
+    return sorted(f for f in os.listdir(os.path.join(ROOT, FFM_TESTS_DIR)) if f.endswith('_test.py'))
+
+
+def test_path(test):
+    """jpy's own files live in src/test/python; FFM extras in ffm/tests."""
+    if os.path.exists(os.path.join(ROOT, FFM_TESTS_DIR, test)):
+        return os.path.join(FFM_TESTS_DIR, test)
+    return os.path.join('src', 'test', 'python', test)
+
+
 def run(test, python, env):
     log_path = os.path.join(LOGS, test + '.log')
     start = time.time()
     try:
-        proc = subprocess.run([python, os.path.join('src', 'test', 'python', test), '-v'],
+        proc = subprocess.run([python, test_path(test), '-v'],
                               cwd=ROOT, env=env, capture_output=True, text=True, timeout=TIMEOUT)
         out = proc.stdout + proc.stderr
         code = proc.returncode
@@ -72,15 +88,8 @@ def run(test, python, env):
     return test, status, ran, passed, fail, err, skip, elapsed
 
 
-def main():
-    tests = sys.argv[1:] or DEFAULT
-    python = os.environ.get('PYTHON', sys.executable)
-    env = dict(os.environ)
-    env.setdefault('JAVA_HOME', os.path.expanduser('~/.sdkman/candidates/java/25.0.3-tem'))
-    env['PYTHONPATH'] = os.path.join(ROOT, 'ffm', 'python')
-    os.makedirs(LOGS, exist_ok=True)
-
-    print(f'python: {python}')
+def run_section(title, tests, python, env):
+    print(f'\n{title}')
     print(f'{"test file":34s} {"status":16s} {"ran":>4s} {"pass":>5s} {"fail":>5s} {"err":>4s} {"skip":>5s} {"secs":>6s}')
     totals = [0, 0, 0, 0, 0]
     for test in tests:
@@ -88,6 +97,21 @@ def main():
         totals = [a + b for a, b in zip(totals, [ran, passed, fail, err, skip])]
         print(f'{t:34s} {status:16s} {ran:4d} {passed:5d} {fail:5d} {err:4d} {skip:5d} {secs:6.1f}', flush=True)
     print(f'{"TOTAL":34s} {"":16s} {totals[0]:4d} {totals[1]:5d} {totals[2]:5d} {totals[3]:4d} {totals[4]:5d}')
+
+
+def main():
+    python = os.environ.get('PYTHON', sys.executable)
+    env = dict(os.environ)
+    env.setdefault('JAVA_HOME', os.path.expanduser('~/.sdkman/candidates/java/25.0.3-tem'))
+    env['PYTHONPATH'] = os.path.join(ROOT, 'ffm', 'python')
+    os.makedirs(LOGS, exist_ok=True)
+
+    print(f'python: {python}')
+    if sys.argv[1:]:
+        run_section('selected tests', sys.argv[1:], python, env)
+        return
+    run_section("jpy's own suite (src/test/python, unmodified)", DEFAULT, python, env)
+    run_section('FFM extras (ffm/tests, FFM-only behavior)', ffm_extras(), python, env)
 
 
 if __name__ == '__main__':
