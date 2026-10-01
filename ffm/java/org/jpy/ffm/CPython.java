@@ -754,10 +754,30 @@ public final class CPython {
             return view.get(ADDRESS, 0).reinterpret(len());
         }
 
+        /** Shared arena guarding segments that may outlive this buffer. Closed before the release. */
+        private Arena dataArena;
+
+        /**
+         * Like data(), but the segment, and any ByteBuffer made from it, dies when close() runs.
+         * A Java access after that throws IllegalStateException. Without it, Java would read the
+         * Python object's memory after PyBuffer_Release, which may already be freed or reused.
+         */
+        MemorySegment scopedData() {
+            if (dataArena == null) {
+                dataArena = Arena.ofShared();
+            }
+            return view.get(ADDRESS, 0).reinterpret(len(), dataArena, null);
+        }
+
         @Override
         public void close() {
             if (held) {
                 held = false;
+                if (dataArena != null) {
+                    // Throws if a Java thread holds the segment, for example in a native call. Then
+                    // we keep the export and leak it, because releasing would free memory in use.
+                    dataArena.close();
+                }
                 try {
                     PyBuffer_Release.invokeExact(view);
                 } catch (Throwable t) {

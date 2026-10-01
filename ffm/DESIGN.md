@@ -198,6 +198,18 @@ code that works on the C jpy keeps working the same way.
    the C jpy, `jpy.get_type(name, resolve=False).someStaticMethod` raises
    `AttributeError` until some instance attribute was touched. Dunder
    introspection still does not resolve (see §3).
+3. **A Java holder that outlives a `jpy.byte_buffer` wrapper fails loudly**
+   (decided 2026-10-01). Both jpys document the rule: the Python object must
+   outlive the Java ByteBuffer. In the C jpy, breaking it reads freed or
+   reused memory. In the FFM jpy, the buffer's memory lives in a shared
+   `Arena` that is closed before `PyBuffer_Release`, so a late Java access
+   throws `IllegalStateException`. If a Java thread still holds the segment
+   in a native call, the close fails and the export is leaked, never freed
+   under the caller. The rule and its help text are unchanged.
+
+   Data races stay the application's job. "Read-only" limits the Java side
+   only, so Python may still write the memory while Java reads it. That gives
+   wrong values, not a crash, the same as any shared memory.
 
 ## 12. Buffer protocol on Java arrays: copy semantics, as measured
 
@@ -217,8 +229,8 @@ Measured on the C jpy before porting (session 5), because reading
 | `memoryview()`, `np.frombuffer()` | read-only views | same |
 | formats | `B` (boolean), `H` (char), `b`, `h`, `i`, `q`, `f`, `d` | same |
 
-`ffm/tests/ffm_buffer_test.py` encodes this table and passes on both the C
-jpy and the FFM jpy. Implementation: native memory from a shared `Arena`
+`ffm/tests/ffm_buffer_test.py` encodes this table, and those tests pass on
+both the C jpy and the FFM jpy. Implementation: native memory from a shared `Arena`
 per exported array, `MemorySegment.copy` both ways, slots `bf_getbuffer` and
 `bf_releasebuffer` on primitive-array types. No pinning, no JNI.
 
@@ -235,7 +247,8 @@ scope, or degrades into an unbounded pin. See the plan doc.
 `jpy.byte_buffer(obj)` wraps a Python object's contiguous buffer as a
 read-only direct `java.nio.ByteBuffer` through `MemorySegment.asByteBuffer`
 (the C jpy uses JNI's `NewDirectByteBuffer`). The `Py_buffer` is released
-when the wrapper is deallocated, as in the C jpy.
+when the wrapper is deallocated, as in the C jpy. Access after that throws
+(§11 item 3).
 
 ## How to reproduce
 
@@ -250,4 +263,4 @@ ffm/matrix.sh jpy_gettype_test.py    # same on 3.12, 3.13, 3.14, 3.13t, 3.14t
 `ffm/tests/` holds unittest files for behavior only the FFM jpy has (the C
 jpy fails them by design, so they stay out of `src/test/python` while both
 implementations exist): `ffm_bridge_test.py` (identity, calls, overloads,
-fields, arrays, errors), `ffm_static_fields_test.py` (§11) and `ffm_buffer_test.py` (§12, also passes on the C jpy).
+fields, arrays, errors), `ffm_static_fields_test.py` (§11) and `ffm_buffer_test.py` (§12; all but the late-access test also pass on the C jpy).

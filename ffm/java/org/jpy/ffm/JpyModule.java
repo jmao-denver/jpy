@@ -264,7 +264,8 @@ final class JpyModule {
             if (buf == null) {
                 throw CPython.valueError("JType_CreateJavaByteBufferObj: the Python object failed to return a contiguous buffer.");
             }
-            java.nio.ByteBuffer bb = buf.data().asByteBuffer().asReadOnlyBuffer();
+            // Scoped so a Java holder that outlives the Python wrapper gets an exception, not freed memory.
+            java.nio.ByteBuffer bb = buf.scopedData().asByteBuffer().asReadOnlyBuffer();
             JavaType jt = JTypes.getType(bb.getClass(), true);
             MemorySegment py = JObjects.newWrapper(bb, jt);
             BYTE_BUFFERS.put(py.address(), buf);

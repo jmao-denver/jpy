@@ -173,7 +173,7 @@ but these".
    UDFs do not use the buffer protocol at all (`deephaven/_udf.py` reads with
    `zip(*args[2:])` and writes with `chunk_result[i] = ret`). So nothing here
    needs JNI: the FFM jpy ports the copy semantics in pure FFM, and
-   `ffm/tests/ffm_buffer_test.py` passes on both implementations. The text
+   the parity tests in `ffm/tests/ffm_buffer_test.py` pass on both implementations. The text
    below, including the FFM-to-JNI pinning update, is kept as the record of
    a technique that would enable a future zero-copy improvement.
 

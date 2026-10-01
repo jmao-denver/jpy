@@ -36,7 +36,11 @@ Details and rules in `ffm/DESIGN.md` §11.
    `jpy.JTypeMeta`.
 2. **Class-level access to a Java member resolves an unresolved type.** The
    C jpy raises `AttributeError` until an instance attribute was touched.
-3. **No compiled code at all.** One universal wheel plus a jar, instead of
+3. **A Java holder that outlives a `jpy.byte_buffer` wrapper gets an
+   exception instead of reading freed memory** (decided 2026-10-01). The
+   documented rule is unchanged. Data races on shared memory stay the
+   application's job.
+4. **No compiled code at all.** One universal wheel plus a jar, instead of
    ~38 binary wheels.
 
 ## Architecture
@@ -136,10 +140,10 @@ Speedups are a bonus concentrated in the scalar-UDF path.
 | 3. Overload resolution | **done 2026-10-01**: `jpy_overload_test.py` 18/18, `jpy_typeres_test.py` 3/3; added `jpy.cast`, `jpy.array` |
 | 4. Conversions wired into calls | **done 2026-10-01**: `jpy_typeconv_test.py` 11/11, `jpy_retval_test.py` 12/12, `jpy_modretparam_test.py` 7/7; added `jpy.convert`, `jpy.type_callbacks`, `jpy.JMethod`, Python buffers as primitive-array arguments with write-back, return-parameter identity. All green on 3.12, 3.13, 3.14, 3.13t, 3.14t |
 
-| 5. Arrays + buffer protocol | **done 2026-10-01**: `jpy_array_test.py` 23/23 on 3.12, 3.13, 3.14, 3.13t, 3.14t; copy semantics measured on the C jpy and ported in pure FFM (no pinning, no JNI); added `jpy.byte_buffer`; `ffm/tests/ffm_buffer_test.py` passes on both the C and FFM jpy |
+| 5. Arrays + buffer protocol | **done 2026-10-01**: `jpy_array_test.py` 23/23 on 3.12, 3.13, 3.14, 3.13t, 3.14t; copy semantics measured on the C jpy and ported in pure FFM (no pinning, no JNI); added `jpy.byte_buffer`; `ffm/tests/ffm_buffer_test.py` parity tests pass on both the C and FFM jpy |
 
 Full suite after session 5 (2026-10-01): **108/154 pass, 0 failures**, 46
-errors, 0 crashes; 13 of 22 files fully green. FFM extras 35/35. Remaining
+errors, 0 crashes; 13 of 22 files fully green. FFM extras 37/37 (byte_buffer late-access check added). Remaining
 errors: the Java-to-Python half, `org.jpy.PyLib`/`PyObject` (session 6),
 and `jpy.diag`/`VerboseExceptions` (session 7).
 

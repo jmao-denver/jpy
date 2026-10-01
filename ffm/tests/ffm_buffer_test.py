@@ -90,6 +90,27 @@ class TestByteBuffer(unittest.TestCase):
         data[0] = ord('Q')
         self.assertEqual(bb.get(0), ord('Q'))
 
+    def test_export_held_until_wrapper_dies(self):
+        data = bytearray(b'xyz')
+        bb = jpy.byte_buffer(data)
+        with self.assertRaises(BufferError):
+            data.extend(b'!')  # bytearray cannot resize while exported
+        del bb
+        gc.collect()
+        data.extend(b'!')
+
+    def test_java_holder_outliving_wrapper_fails_loudly(self):
+        # FFM-only: the C jpy reads freed memory here. Breaking the documented rule now raises.
+        holder = ArrayList()
+        bb = jpy.byte_buffer(bytearray(b'xyz'))
+        holder.add(bb)
+        del bb
+        gc.collect()
+        stale = holder.get(0)
+        with self.assertRaises(RuntimeError) as cm:
+            stale.get(0)
+        self.assertIn('IllegalStateException', str(cm.exception))
+
     def test_rejects_non_buffers(self):
         with self.assertRaises(ValueError):
             jpy.byte_buffer('not a buffer')
