@@ -122,6 +122,36 @@ so bridge choice is irrelevant to FT scalability. 4 Java threads calling
 Python scaled ~1.7x, which a GIL build cannot do. The FFM prototype ran on
 3.13t with zero code changes.
 
+## Measured on the full port (2026-10-01, after session 7)
+
+`ffm/bench/run.sh`: the same script on the C jpy and the FFM jpy, CPython
+3.12.12, JDK 25, macOS arm64, ns per call, median of 5 runs, two runs
+agreeing within ~10%. No performance work done yet (no caching, plain
+reflection, no `critical` downcalls).
+
+| case | C jpy | FFM jpy |
+|---|---|---|
+| Python baseline: call a Python function | 25 | 25 |
+| static, no args | 365 | 230-250 |
+| instance, 1 int | 410 | 335 |
+| `String.length()` | 385 | 300 |
+| 5 overloads, int / str / float arg | 390-570 | 265-430 |
+| `Math.max(3, 4)` | 405 | 295 |
+| 3 `Object` args (boxing) | 1130 | 505 |
+| returns a Java object (`lst.get(0)`) | 1075 | 430 |
+| constructor `Integer(5)` | 595 | 470 |
+| attribute only, `s.length` (bind, no call) | 80 | 165 |
+| Java -> Python, `PyObject` result | 1375 | 490-535 |
+| Java -> Python, `Integer` result | 2050-2320 | 280-300 |
+
+Python to Java is 1.2-2.6x faster, Java to Python 2.6-8x. The one
+regression is attribute lookup on a Java object (`s.length` without the
+call): about 85 ns slower, because the C jpy's `tp_getattro` is C and ours
+is an upcall into Java doing several downcalls. Calls are faster overall
+despite it. The prototype's ~106 ns per Python-to-Java call is not reached:
+the full port does overload scoring and many small CPython downcalls per
+call. Those are the levers if more speed is wanted.
+
 ## Performance ROI (honest version)
 
 - Scalar per-row Python UDFs: projected **4-6x** (landing zone
