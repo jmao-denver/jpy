@@ -8,7 +8,7 @@ timeout, from the repository root. Logs go to ffm/build/suite/<file>.log.
 Usage: <python-with-numpy> ffm/suite.py [test files...]
        (default: setup.py's list, then every ffm/tests/*_test.py)
 Env:   PYTHON  interpreter for the tests (default: the one running this script)
-       JAVA_HOME  JDK 22+ (default: sdkman Temurin 25)
+       JAVA_HOME  JDK 25+ (default: sdkman Temurin 25)
 """
 import os
 import re

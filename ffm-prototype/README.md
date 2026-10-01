@@ -7,7 +7,7 @@ experimental evidence.
 
 ## Requirements
 
-- JDK 22+ (built and run with Temurin 25.0.3 via sdkman)
+- JDK 25+ (built and run with Temurin 25.0.3 via sdkman); FFM itself is final since 22
 - uv-managed CPython 3.12 with `libpython3.12.dylib`
   (path is baked into `Py.java`; override with `-Dlibpython=...`)
 - `PYTHONHOME` must point at the Python prefix (run.sh sets it; the

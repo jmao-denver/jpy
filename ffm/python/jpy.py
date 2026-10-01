@@ -1,5 +1,5 @@
 """
-jpy on the Java FFM API (CPython 3.12+, JDK 22+).
+jpy on the Java FFM API (CPython 3.12+, JDK 25+).
 
 This module is pure Python. create_jvm() starts a JVM inside this process
 through the JNI invocation API (reached with ctypes; the one piece of JNI the

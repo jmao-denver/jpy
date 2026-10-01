@@ -1,4 +1,4 @@
-# Research: rewriting jpy with the Java FFM API (Java 22+)
+# Research: rewriting jpy with the Java FFM API (JDK 25+)
 
 **Scope decision (2026-09-30): the FFM drop-in targets CPython 3.12+ only.**
 3.12 is where PyType_FromSpec gained buffer slots and PyType_FromMetaclass
@@ -7,6 +7,19 @@ per-version struct layouts, no PyErr_Fetch legacy path, no version dispatch.
 This cuts roughly a quarter of the estimated effort and most of the ABI risk;
 the supported set becomes 3.12, 3.13(+t), 3.14(+t). Sections below that
 discuss 3.9-3.11 workarounds are kept for the record but are out of scope.
+
+**Scope decision (2026-10-01): the JDK floor is 25 (LTS).** FFM is final
+since JDK 22, but 22, 23 and 24 are not LTS releases. JDK 25 is the first
+LTS that ships FFM final, so a single LTS floor keeps the support matrix to
+one supported Java line. Earlier text below that says "22+" reflects the
+state before this decision.
+
+**Scope decision (2026-10-01): no array-pinning feature.** Neither a scoped
+context manager nor a global switch: both are too easy to misuse (a pin
+held across arbitrary Python code, released on another thread, or under a
+collector without region pinning). The FFM jpy keeps the C jpy's copy
+semantics. The FFM-to-JNI pinning technique stays documented below for the
+record only.
 
 **Scope decision (2026-09-30): statically linked Pythons are unsupported.**
 A shared libpython is required in both start modes — the same requirement
@@ -23,7 +36,7 @@ JDK/Python stacks). Consequences: (a) the parity bar stays jpy's own full
 test suites, not the Deephaven-exercised subset; (b) the FFM jpy ships as a
 new major version alongside a maintained JNI line rather than replacing it —
 the old build matrix only retires when the JNI line does; (c) environment
-floors (JDK 22+, Python 3.12+, shared libpython) are acceptable for a new
+floors (JDK 25+, Python 3.12+, shared libpython) are acceptable for a new
 major version, behavioral changes are not — quirks are replicated, not fixed.
 
 **Distribution shape**: one pure-Python py3-none-any wheel (the ctypes loader
@@ -43,7 +56,7 @@ CPython extension module that lets Python call Java. The payoff is
 large: almost no C code, no per-Python-version compiled extension (the
 per-version handling moves into the jar as runtime dispatch — see "Version
 portability"), and one fewer FFI hop in each direction. The costs are a big rewrite (~18k lines of C to
-replace), a hard JDK 22+ floor, and careful GIL and refcount handling moving
+replace), a hard JDK 25+ floor (decided; see scope decisions), and careful GIL and refcount handling moving
 from C into Java. Recommended next step: a small spike, not a commitment.
 
 ## What jpy is today
@@ -235,7 +248,7 @@ With FFM:
   kept) one small JNI library per platform: 5 binaries instead of ~38.
 - **Test matrix**: unchanged. Every platform x Python combination still needs
   testing, because version handling moved into the jar, not away.
-- **Java axis**: shrinks from {11, 17, 21, 25} to {22+}. FFM drops three of
+- **Java axis**: shrinks from {11, 17, 21, 25} to {25+}. FFM drops three of
   the four Javas jpy currently supports and tests. Consumers pinned to
   Java 11/17/21 (including Deephaven's stated Java 11+ support) cannot use an
   FFM jpy. Realistically this means shipping the JNI jpy and an FFM jpy in
@@ -279,8 +292,8 @@ does not do this; adding it costs cross-boundary object lifetime complexity.
 
 ## Costs and risks
 
-- **JDK floor: 22+** (21 only has FFM as preview). Deephaven currently supports
-  Java 11–25; adopting an FFM jpy forces the Python-server flavor to 22+.
+- **JDK floor: 25+** (FFM is final since 22, but 22-24 are not LTS; decided 2026-10-01). Deephaven currently supports
+  Java 11–25; adopting an FFM jpy forces the Python-server flavor to 25+.
   This is probably the single biggest adoption question. A transition period
   shipping both the JNI jpy and the FFM jpy is possible since the public
   `org.jpy` API can stay identical.
@@ -503,4 +516,4 @@ A throwaway Java 22+ project that, with zero C:
    dispatch for Python->Java, on 3.12 and 3.13t.
 
 If the spike numbers and the teardown behavior look clean, the full rewrite is
-a planning decision about the JDK 22 floor, not a technical unknown.
+a planning decision about the JDK floor, not a technical unknown.

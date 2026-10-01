@@ -224,9 +224,13 @@ per exported array, `MemorySegment.copy` both ways, slots `bf_getbuffer` and
 
 Known C jpy bug kept for parity: the write-back at dealloc overwrites any
 change Java made to the array after the first export. Fixing it (for
-example, writing back when the last writable view is released) would be a
-candidate improvement, as would true zero-copy views through the FFM-to-JNI
-pinning technique in `ffm-prototype/src/ffm/M10.java`.
+example, writing back when the last writable view is released) is a
+candidate improvement, not yet decided.
+
+Decided 2026-10-01: no zero-copy pinning feature, opt-in or scoped. A
+scoped pin cannot bound the lifetime of objects Python derives from the
+view, so it either corrupts memory when a derived numpy array outlives the
+scope, or degrades into an unbounded pin. See the plan doc.
 
 `jpy.byte_buffer(obj)` wraps a Python object's contiguous buffer as a
 read-only direct `java.nio.ByteBuffer` through `MemorySegment.asByteBuffer`

@@ -6,7 +6,7 @@ Status: proposal for peer review. Companion document: `FFM_REWRITE_RESEARCH.md`
 
 ## Goal
 
-A rewrite of jpy on the Java FFM API (java.lang.foreign, final in JDK 22)
+A rewrite of jpy on the Java FFM API (java.lang.foreign; final since JDK 22, targeted at JDK 25 LTS)
 that is a drop-in for the current JNI jpy:
 
 - same `jpy` module API in Python, same `org.jpy` API in Java
@@ -18,7 +18,7 @@ that is a drop-in for the current JNI jpy:
 | decision | rationale |
 |---|---|
 | CPython 3.12+ only | 3.12 added buffer slots to `PyType_FromSpec` and `PyType_FromMetaclass`; a 3.12 floor keeps the implementation functions-only — no version-specific struct layouts anywhere |
-| JDK 22+ (developed on 25) | FFM is final in 22; JDK 25 is the LTS carrying it |
+| JDK 25+ (LTS) | decided 2026-10-01: JDK 25 is the first LTS with FFM final (FFM is final since 22, which is not LTS); a single LTS floor keeps the support matrix small |
 | shared libpython required | matches today's Java-first requirement; drops the dlsym fallback. Deliberate small regression vs today's Python-first mode on statically linked Pythons |
 | quirks replicated, not fixed | drop-in means bug-for-bug: smallest-box untyped ints (5 -> Byte), char <-> int, truthiness bools, silent narrowing truncation, string-flattened exceptions |
 | dual-track release | Deephaven drives this, but jpy has other users (ESA SNAP et al.) on older stacks. FFM jpy ships as a new major version beside a maintained JNI line; the old build matrix retires only when the JNI line does |
@@ -70,8 +70,15 @@ So the FFM jpy ports the copy semantics directly, in pure FFM (native
 memory plus `MemorySegment.copy`), and `ffm/tests/ffm_buffer_test.py`
 passes identically on both the C jpy and the FFM jpy. The FFM-to-JNI
 pinning technique (`ffm-prototype/src/ffm/M10.java`) still works, but is not
-needed for parity. It remains available as a possible future improvement:
-true zero-copy, write-through views.
+needed for parity.
+
+**Decided 2026-10-01: no pinning feature**, neither opt-in nor scoped. A
+`with jpy.pinned(arr)` block cannot bound the lifetime of what Python
+derives from the view (`result = np.frombuffer(view)` outlives the block).
+At the end of the block that leaves two choices: unpin anyway, which turns a
+surviving numpy array into silent memory corruption, or keep the pin until
+the last view dies, which is an unbounded pin released on an arbitrary
+thread, the same risk as a global switch. Copy semantics stay.
 
 **Distribution**: one pure-Python `py3-none-any` wheel (loader + jar as
 package data) instead of today's ~38 binary wheels. Zero compiled code of
@@ -186,9 +193,9 @@ two focused attempts are skipped and listed, not hidden.
 - **Dual-track overhead**: maintaining both implementations during the
   overlap raises total burden before the matrix savings cash in.
 - **Pinning risk: retired.** Session 5 showed the C jpy copies rather than
-  pins, so the FFM jpy needs no pinning and no JNI beyond the bootstrap.
-  The FFM-to-JNI pinning technique stays documented in the research doc as
-  an option for a future zero-copy improvement, with its rules and risks.
+  pins, so the FFM jpy needs no pinning and no JNI beyond the bootstrap. A
+  pinning feature was considered and rejected (see Architecture); the
+  FFM-to-JNI technique stays documented in the research doc for the record.
 
 ## Decision requested
 
