@@ -13,8 +13,7 @@ do
     exe="$HOME/.local/share/uv/python/$py"
     [[ -x "$exe" ]] || { echo "$py: not installed"; continue; }
     if [[ "$TEST" == junit ]]; then
-        # one result per section: jpy's JUnit tests, then the FFM extras
-        result=$(PYTHON="$exe" ./ffm/junit.sh 2>&1 | grep -E '^(OK|Tests run)' | tr '\n' ' ')
+        result=$(PYTHON="$exe" ./ffm/junit.sh 2>&1 | grep -E '^(OK|Tests run)' | tail -1)
     else
         result=$(PYTHON="$exe" ./ffm/test.sh "$TEST" 2>&1 | grep -E '^(OK|FAILED)' | tail -1)
     fi

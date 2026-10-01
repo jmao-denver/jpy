@@ -285,11 +285,6 @@ public class PyLib {
         // enqueued after the daemon's last poll.
         PyObject.stopCleanupThread();
         if (!STOP_IS_NO_OP) {
-            if (PyLibImpl.ownsInterpreter()) {
-                // FFM jpy: enforces the precondition above instead of crashing later. PyObjects
-                // still alive lose their pointer, so none of them is decRef'd after a restart.
-                PyObjectReferences.forgetAll();
-            }
             stopPython0();
         }
     }

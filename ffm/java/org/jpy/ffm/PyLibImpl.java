@@ -373,11 +373,6 @@ public final class PyLibImpl {
         return true;
     }
 
-    /** True if this JVM started the running interpreter, so stopPython will finalize it. */
-    public static boolean ownsInterpreter() {
-        return savedThreadState != null && isInitialized();
-    }
-
     /** Java_org_jpy_PyLib_stopPython0. */
     public static void stopPython() {
         // Python-first: this JVM did not start the interpreter, so it must neither finalize it nor

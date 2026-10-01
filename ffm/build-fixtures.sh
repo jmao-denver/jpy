@@ -13,9 +13,3 @@ mkdir -p target/test-classes
     -d target/test-classes $(find src/test/java -name '*.java')
 cp -R src/test/resources/. target/test-classes/
 echo "built target/test-classes"
-# FFM-only JUnit tests, kept out of target/test-classes
-rm -rf ffm/build/tests
-mkdir -p ffm/build/tests
-"$JAVA_HOME/bin/javac" --release 25 -Xlint:-options -cp "ffm/build/classes:$JUNIT_JAR:$HAMCREST_JAR" \
-    -d ffm/build/tests $(find ffm/tests/java -name '*.java')
-echo "built ffm/build/tests"
