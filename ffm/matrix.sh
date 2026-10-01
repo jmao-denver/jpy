@@ -1,6 +1,7 @@
 #!/bin/zsh
 # Runs one jpy test file against the FFM jpy on every uv-managed CPython 3.12+ here.
-# Usage: ffm/matrix.sh jpy_gettype_test.py     (or: ffm/matrix.sh junit, for jpy's Java tests)
+# Usage: ffm/matrix.sh jpy_gettype_test.py     (or: ffm/matrix.sh ffm/tests/ffm_bridge_test.py,
+#        or: ffm/matrix.sh junit, for jpy's Java tests)
 cd "$(dirname "$0")/.."
 TEST="$1"
 for py in \
@@ -14,6 +15,8 @@ do
     [[ -x "$exe" ]] || { echo "$py: not installed"; continue; }
     if [[ "$TEST" == junit ]]; then
         result=$(PYTHON="$exe" ./ffm/junit.sh 2>&1 | grep -E '^(OK|Tests run)' | tail -1)
+    elif [[ "$TEST" == ffm/* ]]; then
+        result=$(PYTHON="$exe" ./ffm/py.sh "$TEST" 2>&1 | grep -E '^(OK|FAILED)' | tail -1)
     else
         result=$(PYTHON="$exe" ./ffm/test.sh "$TEST" 2>&1 | grep -E '^(OK|FAILED)' | tail -1)
     fi

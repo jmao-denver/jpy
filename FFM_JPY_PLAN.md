@@ -144,6 +144,10 @@ Speedups are a bonus concentrated in the scalar-UDF path.
 | 4. Conversions wired into calls | **done 2026-10-01**: `jpy_typeconv_test.py` 11/11, `jpy_retval_test.py` 12/12, `jpy_modretparam_test.py` 7/7; added `jpy.convert`, `jpy.type_callbacks`, `jpy.JMethod`, Python buffers as primitive-array arguments with write-back, return-parameter identity. All green on 3.12, 3.13, 3.14, 3.13t, 3.14t |
 | 5. Arrays + buffer protocol | **done 2026-10-01**: `jpy_array_test.py` 23/23 on 3.12, 3.13, 3.14, 3.13t, 3.14t; copy semantics measured on the C jpy and ported in pure FFM (no pinning, no JNI); added `jpy.byte_buffer`; `ffm/tests/ffm_buffer_test.py` parity tests pass on both the C and FFM jpy |
 | 6. Java-side lifecycle | **done 2026-10-01**: all 81 of jpy's JUnit tests (the 8 classes Maven runs, `PyProxyTest` included) and every Python test that crosses back into Java (`eval_exec`, `mt_eval_exec`, `reachability_fence`, `cleanup_thread`, `typeconv_test_pyobj`, `java_embeddable`) pass on 3.12, 3.13, 3.14, 3.13t, 3.14t. `org.jpy.PyLib` ported to FFM (`PyLibImpl`), Java-first startup without JNI |
+| 7. Diagnostics + exception translation | **done 2026-10-01**: `jpy_diag_test.py` 2/2, `jpy_exception_test.py` 5/5, FFM extra `ffm_exceptions_test.py` 7/7 (the C jpy's exact verbose format, line by line), all on 3.12, 3.13, 3.14, 3.13t, 3.14t. Added `jpy.diag`, `jpy.VerboseExceptions`, Java cause chains. Not ported: the C jpy's diagnostic trace printouts |
+
+Full suite after session 7 (2026-10-01): **154/154 pass** on 3.12, all 22
+files green. FFM extras 44/44. JUnit 81/81 on all five interpreters.
 
 Full suite after session 6 (2026-10-01): **151/154 pass, 0 failures**, 3
 errors, 0 crashes; 20 of 22 files fully green. FFM extras 37/37. JUnit:

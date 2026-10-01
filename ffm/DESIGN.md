@@ -1,10 +1,10 @@
 # FFM jpy: design note (session 1 review gate)
 
-Status: sessions 1-6 complete. jpy's Python suite passes 151 of 154
-unmodified, and all 81 of jpy's JUnit tests pass, on CPython 3.12, 3.13,
-3.14, 3.13t and 3.14t with one build, JDK 25, macOS arm64. The 3 left are
-`jpy.diag` and `jpy.VerboseExceptions` (session 7). This note was approved
-on 2026-10-01; sections 11-13 were added since.
+Status: sessions 1-7 complete. jpy's Python suite passes 154 of 154
+unmodified on CPython 3.12, and all 81 of jpy's JUnit tests pass on 3.12,
+3.13, 3.14, 3.13t and 3.14t, with one build, JDK 25, macOS arm64. The full
+Python suite on the other four interpreters is session 8. This note was
+approved on 2026-10-01; sections 11-14 were added since.
 
 ## 1. Object model: the C jpy's classes, plus a real metaclass
 
@@ -173,8 +173,10 @@ primitive arrays and `byte_buffer` (§12).
 Done in session 6: the Java-to-Python direction (§13), including proxies,
 which the plan had put in session 7.
 
-Still open (session 7): `jpy.diag` and `PyLib.Diag` output,
-`jpy.VerboseExceptions` and Java cause chains in Python errors.
+Done in session 7: `jpy.diag`, `jpy.VerboseExceptions` and Java cause
+chains (§14).
+
+Still open: the C jpy's diagnostic trace messages (§14).
 
 ## 10. Found during session 1
 
@@ -332,6 +334,38 @@ so it would suggest restarts are safe when they are not.
 does not match surefire's patterns), and it fails on the C jpy too, because
 `EmbeddableTest.assertFalse` throws when its argument is false.
 
+## 14. Java exceptions in Python, jpy.diag (session 7)
+
+A Java exception becomes a Python `RuntimeError`, as in the C jpy's
+`JPy_HandleJavaException`. Its message is `Throwable.toString()`. With
+`jpy.VerboseExceptions.enabled = True`, the message is the C jpy's verbose
+format: `toString()`, one `\tat <frame>` line per frame, then each cause
+as `caused by <toString()>` with its frames, where frames shared with the
+enclosing exception become `\t... N more`.
+
+Stack traces need one adjustment. A JNI call starts a fresh Java stack, so
+in the C jpy the trace ends at the called method. The FFM jpy calls through
+its own code and reflection, so those frames sit at the bottom of every
+trace. `JavaErrors.callerFrames` cuts each trace in the chain at the first
+`org.jpy.ffm` frame from the top, along with the reflection frames just
+above it. `ffm/tests/ffm_exceptions_test.py` checks the result line by line
+against the exact messages written in jpy's `jpy_exception_test.py`, which
+itself only checks for "java.lang.NullPointerException".
+
+`jpy.diag` and `jpy.VerboseExceptions` are small classes in `jpy.py` with
+the C jpy's names, constants and checks: `flags` takes an int (else
+`ValueError`), `enabled` takes a bool (else `ValueError`, with the C jpy's
+message, which says 'flags'), and the `F_*` constants are read-only. The
+values live in Java: the diag flags are the same variable as
+`org.jpy.PyLib.Diag.getFlags/setFlags`, as `JPy_DiagFlags` is in the C jpy.
+Set before the JVM exists, they are handed to Java by `create_jvm`.
+
+Gap: any nonzero diag flag prints a Java exception's stack trace to stderr
+when it crosses into Python, as the C jpy's `ExceptionDescribe` does. The C
+jpy also prints `printf` trace lines for type resolution, method matching,
+execution, memory, the JVM and errors. Those are not ported. Their text is
+debugging output, not API, and no test reads it.
+
 ## How to reproduce
 
 ```
@@ -347,6 +381,6 @@ ffm/matrix.sh junit                  # same on all five interpreters
 `ffm/tests/` holds unittest files for behavior only the FFM jpy has (the C
 jpy fails them by design, so they stay out of `src/test/python` while both
 implementations exist): `ffm_bridge_test.py` (identity, calls, overloads,
-fields, arrays, errors), `ffm_static_fields_test.py` (§11) and
+fields, arrays, errors), `ffm_static_fields_test.py` (§11),
 `ffm_buffer_test.py` (§12; all but the late-access test also pass on the C
-jpy).
+jpy) and `ffm_exceptions_test.py` (§14).

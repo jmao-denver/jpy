@@ -65,6 +65,11 @@ final class JpyModule {
                         + "of obj via its implemented Buffer Protocol. The resulting PYObject must live longer than the Java object to "
                         + "ensure the underlying data remains valid. In most cases, this means that java functions called in this "
                         + "manner must not keep any references to the ByteBuffer"},
+                // State behind jpy.diag.flags and jpy.VerboseExceptions.enabled (classes in jpy.py).
+                {"_get_diag_flags", "Internal: the diagnostic flags shared with org.jpy.PyLib.Diag."},
+                {"_set_diag_flags", "Internal: sets the diagnostic flags shared with org.jpy.PyLib.Diag."},
+                {"_get_verbose_exceptions", "Internal: whether Java exceptions carry stack traces."},
+                {"_set_verbose_exceptions", "Internal: sets whether Java exceptions carry stack traces."},
         };
         MemorySegment[] impls = {
                 stub("getType", PY_CFUNCTION_WITH_KEYWORDS),
@@ -72,6 +77,10 @@ final class JpyModule {
                 stub("convert", PY_CFUNCTION),
                 stub("array", PY_CFUNCTION),
                 stub("byteBuffer", PY_CFUNCTION),
+                stub("getDiagFlags", PY_CFUNCTION),
+                stub("setDiagFlags", PY_CFUNCTION),
+                stub("getVerboseExceptions", PY_CFUNCTION),
+                stub("setVerboseExceptions", PY_CFUNCTION),
         };
         int[] flags = {
                 CPython.METH_VARARGS | CPython.METH_KEYWORDS,
@@ -79,6 +88,10 @@ final class JpyModule {
                 CPython.METH_VARARGS,
                 CPython.METH_VARARGS,
                 CPython.METH_VARARGS,
+                CPython.METH_NOARGS,
+                CPython.METH_O,
+                CPython.METH_NOARGS,
+                CPython.METH_O,
         };
 
         Arena forever = Arena.global();
@@ -242,6 +255,45 @@ final class JpyModule {
                 return wrapRuntime(Convert.toJavaArray(a[1], component.clazz, false));
             }
             throw CPython.valueError(initError);
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    static MemorySegment getDiagFlags(MemorySegment self, MemorySegment ignored) {
+        try {
+            return CPython.newLong(PyLibImpl.getDiagFlags());
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    /** Diag_setattro: the int check is done in jpy.py; (int) truncates as the C jpy's cast does. */
+    static MemorySegment setDiagFlags(MemorySegment self, MemorySegment value) {
+        try {
+            PyLibImpl.setDiagFlags((int) CPython.asLongUnchecked(value));
+            return CPython.none();
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    static MemorySegment getVerboseExceptions(MemorySegment self, MemorySegment ignored) {
+        try {
+            return CPython.newBool(JavaErrors.verbose);
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    static MemorySegment setVerboseExceptions(MemorySegment self, MemorySegment value) {
+        try {
+            JavaErrors.verbose = value.equals(CPython.Py_True);
+            return CPython.none();
         } catch (Throwable t) {
             CPython.setPythonError(t);
             return NULL;

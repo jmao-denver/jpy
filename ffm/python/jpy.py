@@ -23,6 +23,69 @@ class JException(Exception):
     pass
 
 
+# Until Java installs the bridge, jpy.diag and jpy.VerboseExceptions keep their values here;
+# create_jvm hands them to Java, which owns them from then on (org.jpy.PyLib.Diag shares the flags).
+_pending_diag_flags = 0
+_pending_verbose_exceptions = False
+
+
+class Diag:
+    """Controls output of diagnostic information for debugging"""
+    __slots__ = ()
+
+    F_OFF = 0x00   # Don't print any diagnostic messages
+    F_TYPE = 0x01  # Type resolution: print diagnostic messages while generating Python classes from Java classes
+    F_METH = 0x02  # Method resolution: print diagnostic messages while resolving Java overloaded methods
+    F_EXEC = 0x04  # Execution: print diagnostic messages when Java code is executed
+    F_MEM = 0x08   # Memory: print diagnostic messages when wrapped Java objects are allocated/deallocated
+    F_JVM = 0x10   # JVM: print diagnostic information usage of the Java VM Invocation API
+    F_ERR = 0x20   # Errors: print diagnostic information when erroneous states are detected
+    F_ALL = 0xff   # Print any diagnostic messages
+
+    @property
+    def flags(self):
+        """Combination of diagnostic flags (F_* constants). If != 0, diagnostic messages are printed out."""
+        getter = globals().get('_get_diag_flags')
+        return getter() if getter else _pending_diag_flags
+
+    @flags.setter
+    def flags(self, value):
+        global _pending_diag_flags
+        if not isinstance(value, int):
+            raise ValueError("value for 'flags' must be an integer number")
+        setter = globals().get('_set_diag_flags')
+        if setter:
+            setter(value)
+        else:
+            _pending_diag_flags = value
+
+
+class VerboseExceptions:
+    """Controls python exception verbosity"""
+    __slots__ = ()
+
+    @property
+    def enabled(self):
+        getter = globals().get('_get_verbose_exceptions')
+        return getter() if getter else _pending_verbose_exceptions
+
+    @enabled.setter
+    def enabled(self, value):
+        global _pending_verbose_exceptions
+        if not isinstance(value, bool):
+            # sic: the C jpy's message names 'flags'
+            raise ValueError("value for 'flags' must be a boolean")
+        setter = globals().get('_set_verbose_exceptions')
+        if setter:
+            setter(value)
+        else:
+            _pending_verbose_exceptions = value
+
+
+diag = Diag()
+VerboseExceptions = VerboseExceptions()
+
+
 _jvm = None  # JavaVM*, as an int; set only when this module created the JVM
 _embedded = False  # set by Java when Java started this interpreter (org.jpy.PyLib.startPython)
 
@@ -171,6 +234,8 @@ def create_jvm(options):
         raise RuntimeError("jpy: failed to create Java VM")
     _jvm = jvm.value
     _install(env)
+    _set_diag_flags(_pending_diag_flags)
+    _set_verbose_exceptions(_pending_verbose_exceptions)
     return None
 
 
