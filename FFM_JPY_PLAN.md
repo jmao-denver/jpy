@@ -37,35 +37,41 @@ Details and rules in `ffm/DESIGN.md` §11.
 2. **Class-level access to a Java member resolves an unresolved type.** The
    C jpy raises `AttributeError` until an instance attribute was touched.
 3. **No compiled code at all.** One universal wheel plus a jar, instead of
-   ~38 binary wheels; heap arrays are pinned through FFM calls into JNI.
+   ~38 binary wheels.
 
 ## Architecture
 
-All Java and Python, with no compiled code. Two pieces still go through JNI,
-reached from Python with ctypes or from Java with FFM:
+All Java and Python, with no compiled code. One piece still goes through
+JNI, reached from Python with ctypes:
 
 1. **Python-first bootstrap**: a pure-Python loader calls
    `JNI_CreateJavaVM` through ctypes. Java then adds the bridge to the
    running `jpy` module through FFM. No compiled Python extension.
-2. **Heap-array pinning**: jpy exposes Java primitive arrays to Python
-   through the buffer protocol, zero-copy. Every jpy user doing
-   `np.frombuffer(java_array)` or `memoryview(java_array)` relies on this,
-   and writes through the view land in the Java array. FFM alone cannot
-   give a stable pointer to a Java heap array. Copying instead is slower for
-   large arrays and breaks write-through for every user, so pinning is a
-   core jpy feature, not a Deephaven detail. Deephaven's vectorized UDFs are
-   the heaviest user (verified in deephaven-core source): the engine copies
-   chunks into heap scratch arrays (`FillContextPython.copyToArray`), Python
-   wraps them with `np.frombuffer`, and results come back through numpy
-   writing into the Java return array.
 
-   **It needs no compiled shim.** FFM can call JNI's own function table
-   directly: a Java registry method returns the array as a jobject through
-   `CallStaticObjectMethodA`, and `GetPrimitiveArrayCritical` pins it, all
-   as FFM downcalls. Measured in `ffm-prototype/src/ffm/M10.java`: in-place
-   pin, stable across a full GC, 761 ns per pin+unpin (0.19 ns/row per
-   4096-row chunk), 10/10 clean runs. JDK 22's G1 region pinning (JEP 423)
-   means pinned arrays no longer stall the GC.
+**Correction (2026-10-01, session 5): the buffer protocol needs no
+pinning.** Earlier versions of this plan said jpy exposes Java primitive
+arrays zero-copy, that every `np.frombuffer(java_array)` user relies on
+write-through, and that Deephaven's vectorized UDFs write results back
+through numpy. All three were wrong, found by measuring instead of reading:
+
+- The current C jpy does not pin. `GetPrimitiveArrayCritical` is disabled
+  in `jpy_jarray.c`; it uses `Get<Type>ArrayElements`, which copies on
+  HotSpot. Measured on the C jpy: a view is a snapshot taken at the first
+  export; Python writes are invisible to Java and Java writes are invisible
+  to the view; the copy is written back only when the Python wrapper is
+  deallocated, and only if some export was writable. `memoryview()` and
+  `np.frombuffer()` get read-only views.
+- Deephaven's vectorized UDF wrapper (`deephaven/_udf.py`) does not use the
+  buffer protocol at all: it reads arguments with `zip(*args[2:])` and writes
+  results with `chunk_result[i] = ret`, both through jpy's element-wise
+  sequence protocol. `np.frombuffer` is used elsewhere, read-only.
+
+So the FFM jpy ports the copy semantics directly, in pure FFM (native
+memory plus `MemorySegment.copy`), and `ffm/tests/ffm_buffer_test.py`
+passes identically on both the C jpy and the FFM jpy. The FFM-to-JNI
+pinning technique (`ffm-prototype/src/ffm/M10.java`) still works, but is not
+needed for parity. It remains available as a possible future improvement:
+true zero-copy, write-through views.
 
 **Distribution**: one pure-Python `py3-none-any` wheel (loader + jar as
 package data) instead of today's ~38 binary wheels. Zero compiled code of
@@ -123,6 +129,13 @@ Speedups are a bonus concentrated in the scalar-UDF path.
 | 3. Overload resolution | **done 2026-10-01**: `jpy_overload_test.py` 18/18, `jpy_typeres_test.py` 3/3; added `jpy.cast`, `jpy.array` |
 | 4. Conversions wired into calls | **done 2026-10-01**: `jpy_typeconv_test.py` 11/11, `jpy_retval_test.py` 12/12, `jpy_modretparam_test.py` 7/7; added `jpy.convert`, `jpy.type_callbacks`, `jpy.JMethod`, Python buffers as primitive-array arguments with write-back, return-parameter identity. All green on 3.12, 3.13, 3.14, 3.13t, 3.14t |
 
+| 5. Arrays + buffer protocol | **done 2026-10-01**: `jpy_array_test.py` 23/23 on 3.12, 3.13, 3.14, 3.13t, 3.14t; copy semantics measured on the C jpy and ported in pure FFM (no pinning, no JNI); added `jpy.byte_buffer`; `ffm/tests/ffm_buffer_test.py` passes on both the C and FFM jpy |
+
+Full suite after session 5 (2026-10-01): **108/154 pass, 0 failures**, 46
+errors, 0 crashes; 13 of 22 files fully green. FFM extras 35/35. Remaining
+errors: the Java-to-Python half, `org.jpy.PyLib`/`PyObject` (session 6),
+and `jpy.diag`/`VerboseExceptions` (session 7).
+
 Full suite after session 4 (2026-10-01): **99/154 pass, 0 failures**, 55
 errors, 0 crashes; 12 of 22 files fully green. FFM extras 27/27. The
 remaining errors: the buffer protocol on Java arrays (9, session 5) and the
@@ -152,11 +165,11 @@ two focused attempts are skipped and listed, not hidden.
 2. **Objects, methods, fields** — `jpy_obj_test.py`, `jpy_field_test.py`
 3. **Overload resolution** — `jpy_overload_test.py`, `jpy_typeres_test.py`
 4. **Conversions wired into calls** — `jpy_typeconv_test.py`, `jpy_retval_test.py`
-5. **Arrays + buffer protocol + pinning shim** — `jpy_array_test.py`
+5. **Arrays + buffer protocol** — `jpy_array_test.py`
 6. **Java-side lifecycle** — `PyObjectTest`, `PyModuleTest`, cleanup/reachability
 7. **Proxies + exception translation** — `PyProxyTest`, exception tests
 8. **Full sweep** — both suites on 3.12, then 3.13/3.14, then 3.13t/3.14t
-9. **Linux and Windows** — the loader (jvm.dll via ctypes), libpython discovery, and the shim build are untested off macOS; needs Linux/Windows boxes or CI
+9. **Linux and Windows** — the loader (jvm.dll via ctypes) and libpython discovery are untested off macOS; needs Linux/Windows boxes or CI
 
 ## Cost and risks
 
@@ -172,16 +185,10 @@ two focused attempts are skipped and listed, not hidden.
   concurrency questions the prototype does not.
 - **Dual-track overhead**: maintaining both implementations during the
   overlap raises total burden before the matrix savings cash in.
-- **Pinning risk**: calling JNI from inside an FFM call is outside what the
-  JNI spec describes (it assumes classic native methods). It works on
-  HotSpot/JDK 25 only with two rules, both learned from crashes: bootstrap
-  application classes through `ClassLoader.getSystemClassLoader()`, and make
-  every JNI handle permanent in the very next call, since any Java code
-  running invalidates temporary handles. If a future JDK breaks this, the
-  fallback is a small compiled JNI library inside the jar (per platform).
-  Copying is not a real fallback: it breaks write-through for every jpy
-  user. Deephaven could move its scratch arrays off-heap to avoid pinning on
-  its hot path, but that does not help other jpy users.
+- **Pinning risk: retired.** Session 5 showed the C jpy copies rather than
+  pins, so the FFM jpy needs no pinning and no JNI beyond the bootstrap.
+  The FFM-to-JNI pinning technique stays documented in the research doc as
+  an option for a future zero-copy improvement, with its rules and risks.
 
 ## Decision requested
 

@@ -40,8 +40,18 @@ final class JObjects {
      * reference), passed through jpy.type_translations[jt.name] if present.
      */
     static MemorySegment wrap(Object javaObject, JavaType jt) {
+        return translate(newWrapper(javaObject, jt), jt);
+    }
+
+    /** A new Python instance of jt wrapping javaObject, before any type translation (new reference). */
+    static MemorySegment newWrapper(Object javaObject, JavaType jt) {
         MemorySegment py = CPython.allocInstance(jt.pyType);
         TABLE.put(py.address(), javaObject);
+        return py;
+    }
+
+    /** Applies jpy.type_translations[jt.name] to a fresh wrapper; steals py's reference. */
+    static MemorySegment translate(MemorySegment py, JavaType jt) {
         MemorySegment translation = JpyModule.typeTranslation(jt.name);
         if (translation == null) {
             return py;

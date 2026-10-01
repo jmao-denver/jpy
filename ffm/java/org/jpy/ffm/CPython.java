@@ -48,6 +48,8 @@ public final class CPython {
     public static final int METH_NOARGS = 0x0004;
     public static final int METH_O = 0x0008;
 
+    public static final int Py_bf_getbuffer = 1;
+    public static final int Py_bf_releasebuffer = 2;
     public static final int Py_sq_ass_item = 39;
     public static final int Py_sq_item = 44;
     public static final int Py_sq_length = 45;
@@ -684,6 +686,8 @@ public final class CPython {
     public static final int PyBUF_SIMPLE = 0;
     public static final int PyBUF_WRITABLE = 0x0001;
     public static final int PyBUF_FORMAT = 0x0004;
+    /** PyBUF_C_CONTIGUOUS = 0x0020 | PyBUF_STRIDES (0x0010 | PyBUF_ND 0x0008). */
+    public static final int PyBUF_C_CONTIGUOUS = 0x0038;
 
     /**
      * A Py_buffer obtained with PyObject_GetBuffer. Py_buffer is part of the stable ABI

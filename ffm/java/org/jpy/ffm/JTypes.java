@@ -165,7 +165,10 @@ public final class JTypes {
             slots.add(new long[]{CPython.Py_sq_length, Slots.JOBJ_SQ_LENGTH.address()});
             slots.add(new long[]{CPython.Py_sq_item, Slots.JOBJ_SQ_ITEM.address()});
             slots.add(new long[]{CPython.Py_sq_ass_item, Slots.JOBJ_SQ_ASS_ITEM.address()});
-            // TODO(session 5): buffer protocol slots for primitive arrays
+            if (jt.componentType.isPrimitive && jt.componentType.clazz != void.class) {
+                slots.add(new long[]{CPython.Py_bf_getbuffer, Slots.ARRAY_GETBUFFER.address()});
+                slots.add(new long[]{CPython.Py_bf_releasebuffer, Slots.ARRAY_RELEASEBUFFER.address()});
+            }
         }
         boolean dotless = jt.name.indexOf('.') < 0;
         if (dotless) {

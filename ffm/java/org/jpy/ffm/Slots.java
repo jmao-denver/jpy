@@ -47,6 +47,8 @@ final class Slots {
     static final MemorySegment JOBJ_SQ_LENGTH = stub("jobjSqLength", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
     static final MemorySegment JOBJ_SQ_ITEM = stub("jobjSqItem", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
     static final MemorySegment JOBJ_SQ_ASS_ITEM = stub("jobjSqAssItem", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG, ADDRESS));
+    static final MemorySegment ARRAY_GETBUFFER = stub("arrayGetbuffer", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
+    static final MemorySegment ARRAY_RELEASEBUFFER = stub("arrayReleasebuffer", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
 
     // ---- stubs for jpy.JOverloadedMethod and jpy.JField ----
 
@@ -237,6 +239,8 @@ final class Slots {
     /** JObj_dealloc. Must not raise. */
     static void jobjDealloc(MemorySegment self) {
         try {
+            ArrayExports.onDealloc(self, JObjects.get(self));
+            JpyModule.releaseByteBuffer(self);
             JObjects.remove(self);
             CPython.freeHeapInstance(self);
         } catch (Throwable t) {
@@ -452,6 +456,27 @@ final class Slots {
         } catch (Throwable t) {
             CPython.setPythonError(t);
             return -1;
+        }
+    }
+
+    /** bf_getbuffer on Java primitive arrays (JArray_GetBufferProc). */
+    static int arrayGetbuffer(MemorySegment self, MemorySegment view, int flags) {
+        try {
+            JavaType jt = arrayTypeOf(self);
+            ArrayExports.getBuffer(self, view, flags, requireJavaObject(self), jt.componentType.clazz);
+            return 0;
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return -1;
+        }
+    }
+
+    /** bf_releasebuffer. Must not raise. */
+    static void arrayReleasebuffer(MemorySegment self, MemorySegment view) {
+        try {
+            ArrayExports.releaseBuffer(self);
+        } catch (Throwable t) {
+            t.printStackTrace();
         }
     }
 

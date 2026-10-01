@@ -55,15 +55,21 @@ final class JpyModule {
                 {"array", "array(name, init) - Return a new Java array of given Java type (type name or type object) and initializer "
                         + "(array length or sequence). Possible primitive types are 'boolean', 'byte', 'char', 'short', 'int', "
                         + "'long', 'float', and 'double'."},
+                {"byte_buffer", "byte_buffer(obj) - Return a new Java direct ByteBuffer sharing the same underlying, contiguous buffer "
+                        + "of obj via its implemented Buffer Protocol. The resulting PYObject must live longer than the Java object to "
+                        + "ensure the underlying data remains valid. In most cases, this means that java functions called in this "
+                        + "manner must not keep any references to the ByteBuffer"},
         };
         MemorySegment[] impls = {
                 stub("getType", PY_CFUNCTION_WITH_KEYWORDS),
                 stub("cast", PY_CFUNCTION),
                 stub("convert", PY_CFUNCTION),
                 stub("array", PY_CFUNCTION),
+                stub("byteBuffer", PY_CFUNCTION),
         };
         int[] flags = {
                 CPython.METH_VARARGS | CPython.METH_KEYWORDS,
+                CPython.METH_VARARGS,
                 CPython.METH_VARARGS,
                 CPython.METH_VARARGS,
                 CPython.METH_VARARGS,
@@ -233,6 +239,46 @@ final class JpyModule {
         } catch (Throwable t) {
             CPython.setPythonError(t);
             return NULL;
+        }
+    }
+
+    /** Py_buffers held by jpy.byte_buffer wrappers, keyed by wrapper address, released in tp_dealloc. */
+    private static final java.util.concurrent.ConcurrentHashMap<Long, CPython.Buffer> BYTE_BUFFERS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * jpy.byte_buffer(obj): JType_CreateJavaByteBufferObj. A read-only direct ByteBuffer over the
+     * Python object's memory; FFM's MemorySegment.asByteBuffer replaces JNI's NewDirectByteBuffer.
+     */
+    static MemorySegment byteBuffer(MemorySegment self, MemorySegment args) {
+        try {
+            long n = CPython.tupleSize(args);
+            if (n != 1) {
+                throw CPython.typeError("byte_buffer() takes exactly one argument (" + n + " given)");
+            }
+            MemorySegment obj = CPython.tupleGet(args, 0);
+            if (!CPython.checkBuffer(obj)) {
+                throw CPython.valueError("byte_buffer: argument 1 must be a Python object that supports the buffer protocol.");
+            }
+            CPython.Buffer buf = CPython.Buffer.get(obj, CPython.PyBUF_SIMPLE | CPython.PyBUF_C_CONTIGUOUS);
+            if (buf == null) {
+                throw CPython.valueError("JType_CreateJavaByteBufferObj: the Python object failed to return a contiguous buffer.");
+            }
+            java.nio.ByteBuffer bb = buf.data().asByteBuffer().asReadOnlyBuffer();
+            JavaType jt = JTypes.getType(bb.getClass(), true);
+            MemorySegment py = JObjects.newWrapper(bb, jt);
+            BYTE_BUFFERS.put(py.address(), buf);
+            return JObjects.translate(py, jt);
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    static void releaseByteBuffer(MemorySegment wrapper) {
+        CPython.Buffer buf = BYTE_BUFFERS.remove(wrapper.address());
+        if (buf != null) {
+            buf.close();
         }
     }
 

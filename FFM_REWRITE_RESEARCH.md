@@ -149,7 +149,22 @@ but these".
    does not replace. It can be called from pure Python via `ctypes`, so no C
    code is needed, but that call is and stays JNI.
 
-2. **Zero-copy buffer views of Java heap arrays.** `jpy_jarray.c:72` uses
+2. **Correction (2026-10-01, measured in session 5): this item is wrong as
+   written below.** The current C jpy does not pin: `GetPrimitiveArrayCritical`
+   is compiled out (`JPy_USE_GET_PRIMITIVE_ARRAY_CRITICAL` is commented out
+   in `jpy_jarray.c`), and the active path uses `Get<Type>ArrayElements`,
+   which copies on HotSpot. Measured on the C jpy: views are snapshots taken
+   at the first export; the copy is written back only when the Python
+   wrapper is deallocated, and only after a writable export (it then
+   overwrites any Java-side change made in between). Deephaven's vectorized
+   UDFs do not use the buffer protocol at all (`deephaven/_udf.py` reads with
+   `zip(*args[2:])` and writes with `chunk_result[i] = ret`). So nothing here
+   needs JNI: the FFM jpy ports the copy semantics in pure FFM, and
+   `ffm/tests/ffm_buffer_test.py` passes on both implementations. The text
+   below, including the FFM-to-JNI pinning update, is kept as the record of
+   a technique that would enable a future zero-copy improvement.
+
+   **Zero-copy buffer views of Java heap arrays.** `jpy_jarray.c:72` uses
    `GetPrimitiveArrayCritical` / `Get<Type>ArrayElements` to expose a Java
    primitive array to Python's buffer protocol without copying (numpy can wrap
    it directly). FFM cannot produce a native address for an on-heap Java
@@ -431,7 +446,7 @@ own tests, never by judgment:
 6. Java side: PyObjectTest, PyModuleTest, lifecycle/cleanup tests
 7. PyProxyTest + exception/translation tests
 8. Full both-suite sweep on 3.12, then 3.13/3.14, then 3.13t/3.14t
-9. Linux and Windows (loader, libpython discovery, shim build are untested off macOS; needs boxes or CI)
+9. Linux and Windows (loader and libpython discovery are untested off macOS; needs boxes or CI)
 
 Overall: order of 50-150M tokens across ~9 sessions, 2-4 calendar weeks at
 whatever launch pace, ~10 minutes of human review per session.

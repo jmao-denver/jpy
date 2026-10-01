@@ -156,14 +156,11 @@ uses a `PyMutex` on free-threaded builds and relies on the GIL otherwise.
 Done in sessions 2-4: `type_callbacks`, `jpy.JMethod` (with the
 `set_param_*` annotations), `cast`, `convert`, `array`, Python buffers as
 primitive-array arguments (copied in, copied back when mutable), and
-return-parameter identity.
+return-parameter identity. Done in session 5: the buffer protocol on Java
+primitive arrays and `byte_buffer` (§12).
 
 Still open:
-- `byte_buffer`, `diag`, `VerboseExceptions`
-- the buffer protocol on Java primitive arrays (`memoryview(java_array)`,
-  `np.frombuffer`), with heap-array pinning through FFM calls into JNI's
-  function table and no compiled shim (session 5; proven in
-  `ffm-prototype/src/ffm/M10.java`)
+- `diag`, `VerboseExceptions`
 - Java-to-Python direction: `org.jpy.PyLib`, `PyObject`, `PyModule`,
   `PyObject` arguments and return values (session 6)
 - proxies, verbose exceptions and cause chains (session 7)
@@ -202,6 +199,40 @@ code that works on the C jpy keeps working the same way.
    `AttributeError` until some instance attribute was touched. Dunder
    introspection still does not resolve (see §3).
 
+## 12. Buffer protocol on Java arrays: copy semantics, as measured
+
+Measured on the C jpy before porting (session 5), because reading
+`jpy_jarray.c` was not enough: it contains a disabled
+`GetPrimitiveArrayCritical` (pinning) path and an active
+`Get<Type>ArrayElements` path, which copies on HotSpot.
+
+| step | C jpy | FFM jpy |
+|---|---|---|
+| first export of a Java array | copies it to native memory | same (`ArrayExports`) |
+| later exports | share that copy | same |
+| Python writes through a writable view | stay in the copy | same |
+| Java writes after the first export | not visible in views | same |
+| a view is released | nothing | same |
+| wrapper deallocated | copy written back if any export was writable, then freed | same |
+| `memoryview()`, `np.frombuffer()` | read-only views | same |
+| formats | `B` (boolean), `H` (char), `b`, `h`, `i`, `q`, `f`, `d` | same |
+
+`ffm/tests/ffm_buffer_test.py` encodes this table and passes on both the C
+jpy and the FFM jpy. Implementation: native memory from a shared `Arena`
+per exported array, `MemorySegment.copy` both ways, slots `bf_getbuffer` and
+`bf_releasebuffer` on primitive-array types. No pinning, no JNI.
+
+Known C jpy bug kept for parity: the write-back at dealloc overwrites any
+change Java made to the array after the first export. Fixing it (for
+example, writing back when the last writable view is released) would be a
+candidate improvement, as would true zero-copy views through the FFM-to-JNI
+pinning technique in `ffm-prototype/src/ffm/M10.java`.
+
+`jpy.byte_buffer(obj)` wraps a Python object's contiguous buffer as a
+read-only direct `java.nio.ByteBuffer` through `MemorySegment.asByteBuffer`
+(the C jpy uses JNI's `NewDirectByteBuffer`). The `Py_buffer` is released
+when the wrapper is deallocated, as in the C jpy.
+
 ## How to reproduce
 
 ```
@@ -215,4 +246,4 @@ ffm/matrix.sh jpy_gettype_test.py    # same on 3.12, 3.13, 3.14, 3.13t, 3.14t
 `ffm/tests/` holds unittest files for behavior only the FFM jpy has (the C
 jpy fails them by design, so they stay out of `src/test/python` while both
 implementations exist): `ffm_bridge_test.py` (identity, calls, overloads,
-fields, arrays, errors) and `ffm_static_fields_test.py` (§11).
+fields, arrays, errors), `ffm_static_fields_test.py` (§11) and `ffm_buffer_test.py` (§12, also passes on the C jpy).
