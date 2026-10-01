@@ -1,0 +1,741 @@
+/*
+ * Copyright 2015 Brockmann Consult GmbH
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file was modified by Deephaven Data Labs.
+ *
+ */
+
+package org.jpy;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.util.ArrayList;
+import java.util.function.Supplier;
+
+import org.jpy.ffm.Bootstrap;
+import org.jpy.ffm.PyLibImpl;
+import org.jpy.ffm.PyObjects;
+
+import static org.jpy.PyLibConfig.*;
+
+/**
+ * Represents the library that provides the Python interpreter (CPython).
+ * <p>
+ * When the {@code PyLib} class is loaded, it reads its configuration from a Java properties file called {@code .jpy}
+ * which must exist in the current user's home directory. The configuration file has been written to this location
+ * by installing the Python jpy module using {@code python3 setup.py install --user} on Unix
+ * and {@code python setup.py install}) on Windows.
+ * <p>
+ * Currently, the following properties are recognised in the {@code .jpy} file:
+ * <ul>
+ * <li>{@code python.lib} - the Python shared library (usually required on Unix only)</li>
+ * <li>{@code jpy.lib} - the jpy shared library path for Python (Unix: {@code jpy*.so}, Windows: {@code jpy*.pyd})</li>
+ * </ul>
+ * <p>
+ * jpy API clients should first call {@link #isPythonRunning()} in order to check if a Python interpreter is already available.
+ * If not, {@link #startPython(String...)} must be called before any other jpy API is used.
+ * <p>
+ * <i>FFM jpy: the same class as the C jpy's, with the former native methods implemented in Java through
+ * {@link PyLibImpl} (ported from {@code src/main/c/jni/org_jpy_PyLib.c}). {@code jpy.pythonLib} names the
+ * libpython to load; {@code jpy.jpyLib} names the pure-Python {@code jpy.py}, whose directory goes on
+ * {@code sys.path}.</i>
+ *
+ * @author Norman Fomferra
+ * @since 0.7
+ */
+@SuppressWarnings("WeakerAccess")
+public class PyLib {
+
+    private static final boolean DEBUG = Boolean.getBoolean("jpy.debug");
+    private static final boolean ON_WINDOWS = System.getProperty("os.name").toLowerCase().contains("windows");
+    private static final boolean STOP_IS_NO_OP = Boolean.getBoolean("jpy.stopIsNoOp") || ON_WINDOWS;
+    private static String dllFilePath;
+    private static Throwable dllProblem;
+    private static boolean dllLoaded;
+
+    /**
+     * The kind of callable Python objects.
+     */
+    public enum CallableKind {
+        /**
+         * Function call without the Python {@code self} as first argument.
+         */
+        FUNCTION,
+        /**
+         * An instance method call with the Python {@code self} (= the instance) as first argument.
+         */
+        METHOD,
+    }
+
+    /**
+     * Controls output of diagnostic information for debugging.
+     */
+    @SuppressWarnings("UnusedDeclaration")
+    public static class Diag {
+
+        static {
+            PyLib.loadLib();
+        }
+
+        /**
+         * Print no diagnostic information at all.
+         */
+        public static final int F_OFF = 0x00;
+        /**
+         * Print diagnostic information while Java types are resolved.
+         */
+        public static final int F_TYPE = 0x01;
+        /**
+         * Print diagnostic information while Java methods overloads are selected.
+         */
+        public static final int F_METH = 0x02;
+        /**
+         * Print diagnostic information when code execution flow is passed from Java to Python or the other way round.
+         */
+        public static final int F_EXEC = 0x04;
+        /**
+         * Print diagnostic information about memory allocation/deallocation.
+         */
+        public static final int F_MEM = 0x08;
+        /**
+         * Print diagnostic information usage of the Java VM Invocation API.
+         */
+        public static final int F_JVM = 0x10;
+        /**
+         * Print diagnostic information if erroneous states are detected in the jpy Python module.
+         */
+        public static final int F_ERR = 0x20;
+        /**
+         * Print any diagnostic information.
+         */
+        public static final int F_ALL = 0xff;
+
+        /**
+         * @return the current diagnostic flags.
+         */
+        public static int getFlags() {
+        return PyLibImpl.getDiagFlags();
+    }
+
+        /**
+         * Sets the current diagnostic flags.
+         *
+         * @param flags the current diagnostic flags.
+         */
+        public static void setFlags(int flags) {
+        PyLibImpl.setDiagFlags(flags);
+    }
+
+        private Diag() {
+        }
+    }
+
+    @SuppressWarnings("UnusedDeclaration")
+    public static String getDllFilePath() {
+        return dllFilePath;
+    }
+
+
+    /**
+     * Throws a runtime exception if Python interpreter is not running. Possible reasons for this are
+     * <ul>
+     * <li>You have not called {@link #startPython(String...)} yet.</li>
+     * <li>The Python shared library code for the Python interpreter could not be found or could not be be loaded.</li>
+     * <li>The Python shared library code for the Python 'jpy' module could not be found or could not be be loaded.</li>
+     * <li>The Python interpreter could not be initialised.</li>
+     * </ul>
+     */
+    public static void assertPythonRuns() {
+        if (dllProblem != null) {
+            throw new RuntimeException("PyLib not initialized", dllProblem);
+        }
+        if (!isPythonRunning()) {
+            throw new RuntimeException("PyLib not initialized");
+        }
+    }
+
+    /**
+     * @return {@code true} if the Python interpreter is running and the the 'jpy' module has been loaded.
+     */
+    public static boolean isPythonRunning() {
+        return dllProblem == null && dllLoaded && PyLibImpl.isPythonRunning();
+    }
+
+    /**
+     * Delegates to {@link #startPython(int, String...)} with {@code flags = Diag.F_OFF}.
+     */
+    public static void startPython(String... extraPaths) {
+        startPython(Diag.F_OFF, extraPaths);
+    }
+
+    /**
+     * Starts the Python interpreter. It does the following:
+     * <ol>
+     * <li>Initializes the Python interpreter, if not already running.</li>
+     * <li>Prepends any given extra paths to Python's 'sys.path' (e.g. so that 'jpy' can be loaded from isolated directories).</li>
+     * <li>Imports the 'jpy' extension module, if not already done.</li>
+     * </ol>
+     *
+     * @param flags      If non-zero, is passed to {@link Diag#setFlags(int)} before python is started
+     * @param extraPaths List of paths that will be prepended to Python's 'sys.path'.
+     * @throws RuntimeException if Python could not be started or if the 'jpy' extension module could not be loaded.
+     */
+    public static void startPython(int flags, String... extraPaths) {
+        ArrayList<File> dirList = new ArrayList<>(1 + extraPaths.length);
+
+        // Python-first, dllFilePath may be unset: the running interpreter already imported jpy.
+        File moduleDir = dllFilePath != null ? new File(dllFilePath).getParentFile() : null;
+        if (moduleDir != null) {
+            dirList.add(moduleDir.getAbsoluteFile());
+        }
+
+        for (String extraPath : extraPaths) {
+            File extraDir = new File(extraPath).getAbsoluteFile();
+            if (!dirList.contains(extraDir)) {
+                dirList.add(extraDir);
+            }
+        }
+
+        extraPaths = new String[dirList.size()];
+        for (int i = 0; i < dirList.size(); i++) {
+            extraPaths[i] = dirList.get(i).getPath();
+        }
+
+        if (DEBUG) {
+            System.out.printf("org.jpy.PyLib: Starting Python with %d extra module path(s):%n", extraPaths.length);
+            for (String path : extraPaths) {
+                System.out.printf("org.jpy.PyLib:   %s%n", path);
+            }
+            Diag.setFlags(Diag.F_EXEC | flags);
+        } else if (flags != 0) {
+            Diag.setFlags(flags);
+        }
+
+        startPython0(extraPaths);
+    }
+
+    static boolean startPython0(String... paths) {
+        return PyLibImpl.startPython(paths);
+    }
+
+    /**
+     * Does the equivalent of setting the PYTHONHOME environment variable.  If used,
+     * this must be called prior to calling {@code startPython()}.
+     * Supported for Python 2.7, and Python 3.5 or higher
+     * @param pythonHome Path to Python Home (must be less than 256 characters!)
+     * @return true if successful, false if it fails
+     */
+    public static boolean setPythonHome(String pythonHome) {
+        return PyLibImpl.setPythonHome(pythonHome);
+    }
+
+    /**
+     * Useful for virtual environments, helps in setting sys.prefix/exec_prefix.
+     * If used, this must be called prior to calling {@code startPython()}.
+     * @param programName Path to Python executable (must be less than 256 characters!)
+     * @return true if successful, false if it fails
+     * @see <a href="https://docs.python.org/2/c-api/init.html#c.Py_SetProgramName">Py_SetProgramName (2)</a>
+     * @see <a href="https://docs.python.org/3/c-api/init.html#c.Py_SetProgramName">Py_SetProgramName (3)</a>
+     */
+    public static boolean setProgramName(String programName) {
+        return PyLibImpl.setProgramName(programName);
+    }
+
+    /**
+     * @return The Python interpreter version string.
+     */
+    public static String getPythonVersion() {
+        return PyLibImpl.getPythonVersion();
+    }
+
+    /**
+     * Stops the Python interpreter by calling {@code Py_Finalize}.
+     *
+     * <p><strong>Precondition:</strong> All {@link PyObject} references held by application code
+     * must be released (closed or garbage-collected) before this method is called.
+     * {@code Py_Finalize} is not safe in the presence of live Python object references: any
+     * subsequent {@code Py_DECREF} call against a finalized interpreter will result in a native
+     * crash (SIGSEGV). jpy cannot enforce this contract on behalf of callers.
+     *
+     * <p>This method stops the background cleanup daemon (interrupts it and waits for any
+     * in-flight {@code decRef}/{@code decRefs} batch to complete), then performs one final
+     * synchronous drain before calling {@code Py_Finalize}.
+     *
+     * <p><strong>Important note:</strong> Stopping the Python interpreter again after it has been
+     * restarted using {@link #startPython} currently causes a fatal error in the Java Runtime
+     * Environment originating from the Python interpreter ({@code Py_Finalize} in standard
+     * CPython). There is currently no workaround other than not restarting the interpreter.
+     * For more information refer to <a href="https://github.com/bcdev/jpy/issues/70">issue #70</a>.
+     */
+    public static void stopPython() {
+        // Stop the daemon before Py_Finalize — it must not call decRef/decRefs against a
+        // dead interpreter. The final drain in stopCleanupThread() covers any references
+        // enqueued after the daemon's last poll.
+        PyObject.stopCleanupThread();
+        if (!STOP_IS_NO_OP) {
+            if (PyLibImpl.ownsInterpreter()) {
+                // FFM jpy: enforces the precondition above instead of crashing later. PyObjects
+                // still alive lose their pointer, so none of them is decRef'd after a restart.
+                PyObjectReferences.forgetAll();
+            }
+            stopPython0();
+        }
+    }
+
+    static void stopPython0() {
+        PyLibImpl.stopPython();
+    }
+
+    @Deprecated
+    public static int execScript(String script) {
+        return PyLibImpl.execScript(script);
+    }
+
+    /**
+     * Callers must close the returned reference with {@link #decRef(long)}.
+     */
+    static long executeCode(String code, int start, Object globals, Object locals) {
+        return PyLibImpl.executeCode(code, start, globals, locals);
+    }
+
+    /**
+     * Callers must close the returned reference with {@link #decRef(long)}.
+     */
+    static long executeScript(String file, int start, Object globals, Object locals) throws FileNotFoundException {
+        return PyLibImpl.executeScript(file, start, globals, locals);
+    }
+
+    public static PyObject getMainGlobals() {
+        return PyLibImpl.getMainGlobals();
+    }
+
+    /**
+     * Return a dictionary of the global variables in the current execution frame, or NULL if no
+     * frame is currently executing.
+     *
+     * @return the current globals, or null
+     * @see <a href="https://docs.python.org/2/c-api/reflection.html#c.PyEval_GetGlobals">PyEval_GetGlobals (2)</a>
+     * @see <a href="https://docs.python.org/3/c-api/reflection.html#c.PyEval_GetGlobals">PyEval_GetGlobals (3)</a>
+     */
+    public static PyObject getCurrentGlobals() {
+        return PyLibImpl.getCurrentGlobals();
+    }
+
+    /**
+     * Return a dictionary of the local variables in the current execution frame, or NULL if no
+     * frame is currently executing.
+     *
+     * @return the current locals, or null
+     * @see <a href="https://docs.python.org/2/c-api/reflection.html#c.PyEval_GetLocals">PyEval_GetLocals (2)</a>
+     * @see <a href="https://docs.python.org/3/c-api/reflection.html#c.PyEval_GetLocals">PyEval_GetLocals (3)</a>
+     */
+    public static PyObject getCurrentLocals() {
+        return PyLibImpl.getCurrentLocals();
+    }
+
+    static PyObject copyDict(long pyPointer) {
+        return PyLibImpl.copyDict(pyPointer);
+    }
+
+    static void incRef(long pointer) {
+        PyLibImpl.incRef(pointer);
+    }
+
+    /**
+     * Decrements the reference count of the Python object identified by {@code pointer}.
+     *
+     * <p><b>Ownership warning:</b> This must be called at most once per new reference, and only
+     * when the raw {@code long} pointer is the sole owner — i.e. it was obtained directly from a
+     * low-level API (such as {@link #callAndReturnObject}) and has <em>not</em> been wrapped in a
+     * {@link PyObject}.  If {@code pointer} was obtained via {@link PyObject#getPointer()}, do
+     * <em>not</em> call this method: the {@link PyObject} already owns the reference and will
+     * decrement it on {@link PyObject#close()} or GC-driven cleanup.  Calling both causes a
+     * double-decref that silently corrupts CPython's allocator state.
+     */
+    static void decRef(long pointer) {
+        PyLibImpl.decRef(pointer);
+    }
+
+    static void decRefs(long[] pointers, int len) {
+        PyLibImpl.decRefs(pointers, len);
+    }
+
+    static int getIntValue(long pointer) {
+        return PyLibImpl.getIntValue(pointer);
+    }
+
+    static long getLongValue(long pointer) {
+        return PyLibImpl.getLongValue(pointer);
+    }
+
+    static boolean getBooleanValue(long pointer) {
+        return PyLibImpl.getBooleanValue(pointer);
+    }
+
+    static double getDoubleValue(long pointer) {
+        return PyLibImpl.getDoubleValue(pointer);
+    }
+
+    static String getStringValue(long pointer) {
+        return PyLibImpl.getStringValue(pointer);
+    }
+
+    static Object getObjectValue(long pointer) {
+        return PyLibImpl.getObjectValue(pointer);
+    }
+
+    static boolean isConvertible(long pointer) {
+        return PyLibImpl.isConvertible(pointer);
+    }
+    static boolean pyNoneCheck(long pointer) {
+        return PyLibImpl.pyNoneCheck(pointer);
+    }
+    static boolean pyDictCheck(long pointer) {
+        return PyLibImpl.pyDictCheck(pointer);
+    }
+    static boolean pyListCheck(long pointer) {
+        return PyLibImpl.pyListCheck(pointer);
+    }
+    static boolean pyBoolCheck(long pointer) {
+        return PyLibImpl.pyBoolCheck(pointer);
+    }
+    static boolean pyIntCheck(long pointer) {
+        return PyLibImpl.pyIntCheck(pointer);
+    }
+    static boolean pyLongCheck(long pointer) {
+        return PyLibImpl.pyLongCheck(pointer);
+    }
+    static boolean pyFloatCheck(long pointer) {
+        return PyLibImpl.pyFloatCheck(pointer);
+    }
+    static boolean pyStringCheck(long pointer) {
+        return PyLibImpl.pyStringCheck(pointer);
+    }
+    static boolean pyCallableCheck(long pointer) {
+        return PyLibImpl.pyCallableCheck(pointer);
+    }
+    static boolean pyFunctionCheck(long pointer) {
+        return PyLibImpl.pyFunctionCheck(pointer);
+    }
+    static boolean pyModuleCheck(long pointer) {
+        return PyLibImpl.pyModuleCheck(pointer);
+    }
+    static boolean pyTupleCheck(long pointer) {
+        return PyLibImpl.pyTupleCheck(pointer);
+    }
+
+    static long getType(long pointer) {
+        return PyLibImpl.getType(pointer);
+    }
+
+    static String str(long pointer) {
+        return PyLibImpl.str(pointer);
+    }
+
+    static String repr(long pointer) {
+        return PyLibImpl.repr(pointer);
+    }
+
+    static long hash(long pointer) {
+        return PyLibImpl.hash(pointer);
+    }
+
+    static boolean eq(long pointer1, Object other) {
+        return PyLibImpl.eq(pointer1, other);
+    }
+
+    static PyObject newDict() {
+        return PyLibImpl.newDict();
+    }
+
+    /**
+     * https://docs.python.org/2/c-api/dict.html#c.PyDict_Keys
+     * https://docs.python.org/3/c-api/dict.html#c.PyDict_Keys
+     * @return Return a PyListObject containing all the keys from the dictionary.
+     */
+    static PyObject pyDictKeys(long pointer) {
+        return PyLibImpl.pyDictKeys(pointer);
+    }
+
+    /**
+     * https://docs.python.org/2/c-api/dict.html#c.PyDict_Values
+     * https://docs.python.org/3/c-api/dict.html#c.PyDict_Values
+     * @return Return a PyListObject containing all the values from the dictionary p.
+     */
+    static PyObject pyDictValues(long pointer) {
+        return PyLibImpl.pyDictValues(pointer);
+    }
+
+    /**
+     * Determine if dictionary dict contains key.
+     * This is equivalent to the Python expression `key in dict`
+     *
+     * https://docs.python.org/2/c-api/dict.html#c.PyDict_Contains
+     * https://docs.python.org/3/c-api/dict.html#c.PyDict_Contains
+     *
+     * @param dict     the dictionary
+     * @param key      the key
+     * @param keyClass Optional type for converting the key to a Python object
+     * @return True iff key is in dict.
+     */
+    static <T> boolean pyDictContains(long dict, T key, Class<? extends T> keyClass) {
+        return PyLibImpl.pyDictContains(dict, key, keyClass);
+    }
+
+    static <T> T[] getObjectArrayValue(long pointer, Class<? extends T> itemType) {
+        return PyLibImpl.getObjectArrayValue(pointer, itemType);
+    }
+
+    /**
+     * Callers must close the returned reference with {@link #decRef(long)}.
+     */
+    static long importModule(String name) {
+        return PyLibImpl.importModule(name);
+    }
+
+    /**
+     * Gets the value of a given Python attribute as Python object pointer.
+     * <p>
+     * Callers must close the returned reference with {@link #decRef(long)}.
+     *
+     * @param pointer Identifies the Python object which contains the attribute {@code name}.
+     * @param name    The attribute name.
+     * @return Pointer to a Python object that is the value of the attribute (always a new reference).
+     */
+    static long getAttributeObject(long pointer, String name) {
+        return PyLibImpl.getAttributeObject(pointer, name);
+    }
+
+    /**
+     * Gets the value of a given Python attribute as Java value.
+     *
+     * @param pointer   Identifies the Python object which contains the attribute {@code name}.
+     * @param name      The attribute name.
+     * @param valueType The expected return type.
+     * @return A value that represents the converted Python attribute value.
+     */
+    static <T> T getAttributeValue(long pointer, String name, Class<? extends T> valueType) {
+        return PyLibImpl.getAttributeValue(pointer, name, valueType);
+    }
+
+    /**
+     * Sets the Python attribute given by {@code name} of the Python object pointed to by {@code pointer}.
+     * <p>
+     * Before the Python attribute is set, the Java {@code value} is converted into a corresponding
+     * Python object using the optional {@code valueType}.
+     * The {@code value} may also be of type {@code PyObject}.
+     * In this case, it will be directly translated into the corresponding Python object without conversion.
+     *
+     * @param pointer   Identifies the Python object which contains the attribute {@code name}.
+     * @param name      The attribute name.
+     * @param value     The new attribute value.
+     * @param valueType Optional type for converting the value to a Python object.
+     */
+    static <T> void setAttributeValue(long pointer, String name, T value, Class<? extends T> valueType) {
+        PyLibImpl.setAttributeValue(pointer, name, value, valueType);
+    }
+
+    /**
+     * Deletes the Python attribute given by {@code name} of the Python object pointed to by {@code pointer}.
+     * <p>
+     *
+     * @param pointer Identifies the Python object which contains the attribute {@code name}.
+     * @param name    The attribute name.
+     */
+    static void delAttribute(long pointer, String name) {
+        PyLibImpl.delAttribute(pointer, name);
+    }
+
+    /**
+     * Checks for the existence the Python attribute given by {@code name} of the Python object pointed to by {@code pointer}.
+     * <p>
+     *
+     * @param pointer Identifies the Python object which contains the attribute {@code name}.
+     * @param name    The attribute name.
+     * @return true if the Python object has an attribute named {@code name}
+     */
+    static boolean hasAttribute(long pointer, String name) {
+        return PyLibImpl.hasAttribute(pointer, name);
+    }
+
+    public static boolean hasGil() {
+        return PyLibImpl.hasGil();
+    }
+
+    public static <T> T ensureGil(Supplier<T> runnable) {
+        return PyLibImpl.ensureGil(runnable);
+    }
+
+    /**
+     * Calls a Python callable and returns the resulting Python object.
+     * <p>
+     * Before the Python callable is called, the {@code args} array of Java objects is converted into corresponding
+     * Python objects.
+     * The {@code args} array may also contain objects of type {@code PyObject}.
+     * These will be directly translated into the corresponding Python objects without conversion.
+     * <p>
+     * <b>Ownership:</b> The returned {@code long} is a new Python reference owned by the caller.
+     * The caller must release it via exactly one of:
+     * <ul>
+     *   <li>{@link #decRef(long)} — when keeping the result as a raw pointer, or</li>
+     *   <li>wrapping it in {@code new PyObject(long)} and relying on {@link PyObject#close()} /
+     *       GC cleanup for release.</li>
+     * </ul>
+     * Mixing both (explicit {@link #decRef(long)} <em>and</em> a live {@link PyObject} wrapper)
+     * causes a double-decref that silently corrupts CPython's allocator state.
+     *
+     * @param pointer    Identifies the Python object which contains the callable {@code name}.
+     * @param methodCall true, if this is a call of a method of the Python object pointed to by {@code pointer}.
+     * @param name       The name of the callable.
+     * @param argCount   The argument count (length of the following {@code args} array).
+     * @param args       The arguments.
+     * @param paramTypes Optional array of parameter types for the conversion of the {@code args} into a Python tuple.
+     *                   If not null, it must be an array of the same length as {@code args}.
+     * @return The resulting Python object (always a new reference).
+     */
+    static long callAndReturnObject(long pointer, boolean methodCall, String name, int argCount, Object[] args, Class<?>[] paramTypes) {
+        return PyLibImpl.callAndReturnObject(pointer, methodCall, name, argCount, args, paramTypes);
+    }
+
+    /**
+     * Calls a Python callable and returns the a Java Object.
+     * <p>
+     * Before the Python callable is called, the {@code args} array of Java objects is converted into corresponding
+     * Python objects. The return value of the Python call is converted to a Java object according the the given
+     * return type.
+     * The {@code args} array may also contain objects of type {@code PyObject}.
+     * These will be directly translated into the corresponding Python objects without conversion.
+     *
+     * @param pointer    Identifies the Python object which contains the callable {@code name}.
+     * @param methodCall true, if this is a call of a method of the Python object pointed to by {@code pointer}.
+     * @param name       The name of the callable.
+     * @param argCount   The argument count (length of the following {@code args} array).
+     * @param args       The arguments.
+     * @param paramTypes Optional array of parameter types for the conversion of the {@code args} into a Python tuple.
+     *                   If not null, it must be an array of the same length as {@code args}.
+     * @param returnType Optional return type.
+     * @return The resulting Python object (always a new reference).
+     */
+    static <T> T callAndReturnValue(long pointer, boolean methodCall, String name, int argCount, Object[] args, Class<?>[] paramTypes, Class<T> returnType) {
+        return PyLibImpl.callAndReturnValue(pointer, methodCall, name, argCount, args, paramTypes, returnType);
+    }
+
+    private static void loadLib() {
+        if (dllLoaded || dllProblem != null) {
+            return;
+        }
+        try {
+            if (Bootstrap.isInstalled()) {
+                // Python-first: this JVM runs inside the Python process that created it, and that
+                // process's libpython is already loaded and bound.
+                dllFilePath = getProperty(JPY_LIB_KEY, false);
+            } else {
+                // Java-first: the FFM bindings read the libpython path from this system property.
+                String pythonLibPath = getProperty(PYTHON_LIB_KEY, true);
+                System.setProperty(PYTHON_LIB_KEY, pythonLibPath);
+                if (new File(pythonLibPath).isFile()) {
+                    preloadPythonLib(pythonLibPath);
+                }
+                // E.g. dllFilePath = "/usr/local/lib/python3.12/site-packages/jpy.py";
+                dllFilePath = getProperty(JPY_LIB_KEY, true);
+            }
+            if (dllFilePath != null) {
+                dllFilePath = new File(dllFilePath).getAbsolutePath();
+            }
+            dllProblem = null;
+            dllLoaded = true;
+        } catch (Throwable t) {
+            dllProblem = t;
+            throw t;
+        }
+    }
+
+    private static void preloadPythonLib(String pythonLibPath) {
+        if (getOS() != OS.WINDOWS) {
+            // For PyLib, we load the shared library that was generated for the Python extension module 'jpy'.
+            // However, to use 'jpy' from Java we also need the Python shared library to be loaded as well.
+            // On Windows, this is done auto-magically, on Linux and Darwin we have to either change 'setup.py'
+            // to also include a dependency to the Python shared lib or, as done here, explicitly load it.
+            //
+            // If the Python shared lib is not found, we get error messages similar to the following:
+            // java.lang.UnsatisfiedLinkError: /usr/local/lib/python3.3/dist-packages/jpy.cpython-33m.so:
+            //      /usr/local/lib/python3.3/dist-packages/jpy.cpython-33m.so: undefined symbol: PyFloat_Type
+            if (DEBUG)
+                System.out.printf("org.jpy.PyLib: DL.dlopen(\"%s\", DL.RTLD_GLOBAL + DL.RTLD_LAZY%n", pythonLibPath);
+
+            long handle = DL.dlopen(pythonLibPath, DL.RTLD_GLOBAL + DL.RTLD_LAZY);
+            if (handle == 0) {
+                String message = "Failed to load Python shared library '" + pythonLibPath + "'";
+                String dlError = DL.dlerror();
+                if (dlError != null) {
+                    message += ": " + dlError;
+                }
+                throw new RuntimeException(message);
+            }
+        } else {
+            // Fixes https://github.com/bcdev/jpy/issues/58
+            // Loading of jpy DLL fails for user-specific Python installations on Windows
+            if (DEBUG) System.out.printf("org.jpy.PyLib: System.load(\"%s\")%n", pythonLibPath);
+            try {
+                System.load(pythonLibPath);
+            } catch (Exception e) {
+                String message = "Failed to load Python shared library '" + pythonLibPath + "': " + e.getMessage();
+                System.err.println(message);
+            }
+        }
+    }
+
+    private PyLib() {
+    }
+
+    /**
+     * We call this method to ensure that this class gets loaded, and thus the static block gets run
+     *
+     * We don't technically need this method. Callers could instead rely on reflection, using
+     * {@link Class#forName(String)}, but this method is better because it is much more explicit.
+     */
+    static void dummyMethodForInitialization() { }
+
+    static {
+        // see documentation in PyLibInitializer for explanation
+        PyLibInitializer.pyLibInitialized = true;
+        if (DEBUG) System.out.println("org.jpy.PyLib: entered static initializer");
+        PyObjects.install(new PyObjects.Hooks() {
+            @Override
+            public PyObject newPyObject(long pointer) {
+                return new PyObject(pointer, true);
+            }
+
+            @Override
+            public RuntimeException newKeyError(String message) {
+                return new KeyError(message);
+            }
+
+            @Override
+            public RuntimeException newStopIteration(String message) {
+                return new StopIteration(message);
+            }
+
+            @Override
+            public long dictWrapperPointer(Object o) {
+                return o instanceof PyDictWrapper ? ((PyDictWrapper) o).getPointer() : 0;
+            }
+        });
+        loadLib();
+        if (DEBUG) System.out.println("org.jpy.PyLib: exited static initializer");
+    }
+}
+
+

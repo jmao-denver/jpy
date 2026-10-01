@@ -42,6 +42,16 @@ public final class JTypes {
             "int", int.class, "long", long.class, "float", float.class, "double", double.class,
             "void", void.class);
 
+    /** Before Py_Finalize; see Bootstrap.uninstall. */
+    static void reset() {
+        BY_CLASS.clear();
+        BY_PYTYPE.clear();
+        OVERLOADS.clear();
+        rootType = null;
+        objectType = null;
+        classType = null;
+    }
+
     public static JavaType byPyType(long pyTypeAddress) {
         return BY_PYTYPE.get(pyTypeAddress);
     }

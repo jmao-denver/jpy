@@ -78,6 +78,11 @@ final class Slots {
     static MemorySegment fieldType;
     static MemorySegment methodType;
 
+    /** Before Py_Finalize; see Bootstrap.uninstall. */
+    static void reset() {
+        metaType = overloadedMethodType = fieldType = methodType = null;
+    }
+
     /** PyGetSetDef[] { name, get, set, doc, closure } + sentinel; closure carries an attribute id. */
     private static MemorySegment getsets(MemorySegment getter, String... names) {
         Arena forever = Arena.global();

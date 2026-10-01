@@ -63,7 +63,8 @@ final class Convert {
             return pyArg.equals(Py_None) ? null : CPython.toJavaString(pyArg);
         }
         if (paramType == Constants.PY_OBJECT_CLASS) {
-            throw CPython.runtimeError("org.jpy.PyObject parameters are not supported yet by the FFM bridge");
+            // JType_ConvertPyArgToJPyObjectArg: every argument, None included, becomes a PyObject
+            return PyObjects.wrap(pyArg);
         }
         // JType_ConvertPyArgToJObjectArg
         if (pyArg.equals(Py_None)) return null;
@@ -126,7 +127,7 @@ final class Convert {
             throw conversionError(pyArg, target.getName());
         }
         if (target == Constants.PY_OBJECT_CLASS) {
-            throw CPython.runtimeError("org.jpy.PyObject targets are not supported yet by the FFM bridge");
+            return PyObjects.wrap(pyArg);
         }
         if (CPython.isStr(pyArg) && target.isAssignableFrom(String.class)) {
             return CPython.toJavaString(pyArg);
@@ -152,7 +153,7 @@ final class Convert {
             return (float) asJDouble(pyArg);
         }
         if (target == Object.class && allowObjectWrapping) {
-            throw CPython.runtimeError("wrapping Python objects as org.jpy.PyObject is not supported yet by the FFM bridge");
+            return PyObjects.wrap(pyArg);
         }
         throw conversionError(pyArg, target.getName());
     }
@@ -179,7 +180,7 @@ final class Convert {
             throw CPython.valueError("cannot convert a Python '" + CPython.typeName(pyArg)
                     + "' to a Java array of type '" + component.getName() + "'");
         }
-        Object array = Array.newInstance(component, (int) n);
+        Object array = CPython.newJavaArray(component, (int) n);
         for (int i = 0; i < n; i++) {
             MemorySegment item = CPython.sequenceGet(pyArg, i);
             try {
@@ -258,7 +259,20 @@ final class Convert {
                 return toPython(v, runtime);
             }
         }
-        // TODO(session 6/7): org.jpy.PyObject values and createProxy() unwrapping
+        if (PyObjects.isPyObjectClass(declared)) {
+            MemorySegment o = PyObjects.pointer((org.jpy.PyObject) v);
+            CPython.incRef(o);
+            return o;
+        }
+        if (!declared.isArray() && declared != Object.class) {
+            // An object made by PyObject.createProxy goes back to Python as the original Python object.
+            org.jpy.PyObject proxied = org.jpy.PyObject.unwrapProxy(v);
+            if (proxied != null) {
+                MemorySegment o = PyObjects.pointer(proxied);
+                CPython.incRef(o);
+                return o;
+            }
+        }
         return JObjects.wrap(v, JTypes.getType(declared, false));
     }
 

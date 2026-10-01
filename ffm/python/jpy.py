@@ -7,7 +7,9 @@ FFM design keeps) and calls org.jpy.ffm.Bootstrap.install(), which fills this
 module in from Java: get_type, JType, JOverloadedMethod, JField, ...
 """
 
-import ctypes
+# ctypes is imported only inside the functions that need it, which all run Python-first. Java-first,
+# org.jpy.PyLib may stop and restart the interpreter, and re-importing _ctypes after Py_Finalize
+# aborts the process (CPython 3.12).
 import os
 import sys
 
@@ -21,7 +23,8 @@ class JException(Exception):
     pass
 
 
-_jvm = None  # JavaVM*, as an int
+_jvm = None  # JavaVM*, as an int; set only when this module created the JVM
+_embedded = False  # set by Java when Java started this interpreter (org.jpy.PyLib.startPython)
 
 _JNI_VERSION_10 = 0x000A0000
 _JNI_OK = 0
@@ -38,24 +41,30 @@ _ENV_EXCEPTION_CHECK = 228
 _VM_DESTROY_JAVA_VM = 3
 
 
-class _JavaVMOption(ctypes.Structure):
-    _fields_ = [("optionString", ctypes.c_char_p), ("extraInfo", ctypes.c_void_p)]
+def _init_args_types():
+    """JavaVMOption and JavaVMInitArgs as ctypes structures."""
+    import ctypes
 
+    class _JavaVMOption(ctypes.Structure):
+        _fields_ = [("optionString", ctypes.c_char_p), ("extraInfo", ctypes.c_void_p)]
 
-class _JavaVMInitArgs(ctypes.Structure):
-    _fields_ = [("version", ctypes.c_int32),
-                ("nOptions", ctypes.c_int32),
-                ("options", ctypes.POINTER(_JavaVMOption)),
-                ("ignoreUnrecognized", ctypes.c_uint8)]
+    class _JavaVMInitArgs(ctypes.Structure):
+        _fields_ = [("version", ctypes.c_int32),
+                    ("nOptions", ctypes.c_int32),
+                    ("options", ctypes.POINTER(_JavaVMOption)),
+                    ("ignoreUnrecognized", ctypes.c_uint8)]
+
+    return _JavaVMOption, _JavaVMInitArgs
 
 
 def has_jvm():
     """has_jvm() - Check if the JVM is available."""
-    return _jvm is not None
+    return _jvm is not None or _embedded
 
 
 def _vtable_fn(obj, index, restype, *argtypes):
     """Slot `index` of a JNI function table; obj is a JNIEnv* or JavaVM* (pointer to table pointer)."""
+    import ctypes
     if isinstance(obj, int):
         obj = ctypes.c_void_p(obj)
     table = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
@@ -65,6 +74,7 @@ def _vtable_fn(obj, index, restype, *argtypes):
 
 def _libpython_path():
     """The path of the libpython image this interpreter runs from."""
+    import ctypes
     override = os.environ.get('JPY_PYTHON_LIB')
     if override:
         return override
@@ -102,6 +112,7 @@ def _ffm_classpath():
 
 def _create_java_vm_fn():
     """JNI_CreateJavaVM from an already loaded libjvm, else from JAVA_HOME."""
+    import ctypes
     try:
         return ctypes.CDLL(None).JNI_CreateJavaVM
     except (AttributeError, OSError):
@@ -124,7 +135,8 @@ def _with_ffm_options(options):
     has_classpath = False
     for option in options:
         if option.startswith('-Djava.class.path='):
-            option = option + os.pathsep + classpath
+            # First, so the FFM org.jpy classes win over a C jpy jar the caller may still list.
+            option = '-Djava.class.path=' + classpath + os.pathsep + option[len('-Djava.class.path='):]
             has_classpath = True
         result.append(option)
     if not has_classpath:
@@ -137,12 +149,14 @@ def _with_ffm_options(options):
 def create_jvm(options):
     """create_jvm(options) - Create the Java VM from the given list of options."""
     global _jvm
-    if _jvm is not None:
+    if has_jvm():
         return None
     if isinstance(options, (str, bytes)) or not hasattr(options, '__len__'):
         raise ValueError("create_jvm: argument 1 (options) must be a sequence of Java VM option strings")
     all_options = _with_ffm_options([str(o) for o in options])
 
+    import ctypes
+    _JavaVMOption, _JavaVMInitArgs = _init_args_types()
     c_options = (_JavaVMOption * len(all_options))()
     for i, option in enumerate(all_options):
         c_options[i].optionString = option.encode('utf-8')
@@ -161,6 +175,7 @@ def create_jvm(options):
 
 
 def _install(env):
+    import ctypes
     find_class = _vtable_fn(env, _ENV_FIND_CLASS, ctypes.c_void_p, ctypes.c_char_p)
     get_static_method_id = _vtable_fn(env, _ENV_GET_STATIC_METHOD_ID, ctypes.c_void_p,
                                       ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p)
@@ -192,6 +207,7 @@ def destroy_jvm():
     """destroy_jvm() - Destroy the current Java VM."""
     global _jvm
     if _jvm is not None:
+        import ctypes
         _vtable_fn(_jvm, _VM_DESTROY_JAVA_VM, ctypes.c_int32)()
         _jvm = None
     return None

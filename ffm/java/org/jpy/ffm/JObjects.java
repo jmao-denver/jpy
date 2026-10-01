@@ -30,6 +30,11 @@ final class JObjects {
         return TABLE.size();
     }
 
+    /** Before Py_Finalize; see Bootstrap.uninstall. */
+    static void reset() {
+        TABLE.clear();
+    }
+
     /** The Java type of pyObj's exact Python type, or null if it is not a Java type. */
     static JavaType javaTypeOf(MemorySegment pyObj) {
         return JTypes.byPyType(CPython.typeAddress(pyObj));

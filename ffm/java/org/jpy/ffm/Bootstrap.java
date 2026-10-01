@@ -38,6 +38,38 @@ public final class Bootstrap {
         }
     }
 
+    public static boolean isInstalled() {
+        return installed;
+    }
+
+    /**
+     * Java-first: org.jpy.PyLib started the interpreter and imported the pure-Python jpy module,
+     * which only installs the bridge itself from create_jvm(). Marks the module as running inside
+     * an existing JVM (so jpy.has_jvm() is true and create_jvm() does nothing), then installs.
+     * The GIL must be held.
+     */
+    static void installEmbedded(MemorySegment module) {
+        CPython.setAttr(module, "_embedded", CPython.Py_True);
+        install(module.address());
+    }
+
+    /**
+     * Before Py_Finalize: forgets every Python object the bridge knows, so a restarted interpreter
+     * starts from a clean bridge (the C jpy's JPy_free). Nothing is decRef'd: finalization frees it.
+     * The GIL must be held.
+     */
+    static void uninstall() {
+        installed = false;
+        JTypes.reset();
+        JObjects.reset();
+        OverloadSet.BY_PYOBJ.clear();
+        OverloadSet.JMethod.BY_PYOBJ.clear();
+        JFieldInfo.BY_PYOBJ.clear();
+        ArrayExports.reset();
+        JpyModule.reset();
+        Slots.reset();
+    }
+
     private static String describePendingPythonError() {
         // Keep it simple: the Python side re-raises with this text.
         CPython.errClear();

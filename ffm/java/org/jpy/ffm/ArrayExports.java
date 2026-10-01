@@ -63,6 +63,14 @@ final class ArrayExports {
             double.class, Arena.global().allocateFrom("d"));
     private static final MemorySegment FORMAT_UNSIGNED_BYTE = Arena.global().allocateFrom("B");
 
+    /**
+     * Before Py_Finalize; see Bootstrap.uninstall. Copies still exported are not freed, because
+     * finalization may still read them. That leak only happens on an interpreter restart.
+     */
+    static void reset() {
+        EXPORTS.clear();
+    }
+
     /** bf_getbuffer: fills the Py_buffer (layout in CPython.Buffer) and takes a reference to self. */
     static void getBuffer(MemorySegment self, MemorySegment view, int flags, Object array, Class<?> component) {
         Export e;

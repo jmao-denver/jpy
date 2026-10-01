@@ -517,11 +517,12 @@ def init_jvm(java_home=None,
         jpy.create_jvm(options=jvm_options)
         try:
             py_lib_initializer = jpy.get_type('org.jpy.PyLibInitializer')
-            # FFM jpy: the interpreter's own libpython is known exactly, and there is no 'jdl' helper module.
+            # FFM jpy: the interpreter's own libpython is known exactly. There is no 'jdl' helper module
+            # (org.jpy.DL uses FFM), and initPyLib rejects null, so its path is empty.
             py_lib_initializer.initPyLib(
                 jpy._libpython_path(),
                 _get_module_path('jpy', fail=True),
-                None
+                ''
             )
         except ValueError:
             # It's valid to not have jpy.jar on the classpath if you don't expect java to call into python

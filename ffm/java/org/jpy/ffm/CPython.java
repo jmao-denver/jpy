@@ -225,6 +225,26 @@ public final class CPython {
         }
     }
 
+    static final MethodHandle PyErr_NoMemory = dc("PyErr_NoMemory", FunctionDescriptor.of(ADDRESS));
+
+    /**
+     * A new Java array, or Python's MemoryError if the JVM is out of heap. The C jpy raises
+     * MemoryError when JNI's New&lt;Type&gt;Array fails, so the same Java error must not surface
+     * as a RuntimeError here.
+     */
+    public static Object newJavaArray(Class<?> component, int length) {
+        try {
+            return java.lang.reflect.Array.newInstance(component, length);
+        } catch (OutOfMemoryError e) {
+            try {
+                MemorySegment ignored = (MemorySegment) PyErr_NoMemory.invokeExact();
+            } catch (Throwable t) {
+                throw rethrow(t);
+            }
+            throw PyErrAlreadySet.INSTANCE;
+        }
+    }
+
     public static boolean errMatches(MemorySegment excType) {
         try {
             return (int) PyErr_ExceptionMatches.invokeExact(excType) != 0;
@@ -592,6 +612,15 @@ public final class CPython {
     public static MemorySegment dictGet(MemorySegment dict, String key) {
         try (Arena a = Arena.ofConfined()) {
             return (MemorySegment) PyDict_GetItemString.invokeExact(dict, a.allocateFrom(key));
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** New reference to an empty dict. */
+    public static MemorySegment newDict() {
+        try {
+            return check((MemorySegment) PyDict_New.invokeExact());
         } catch (Throwable t) {
             throw rethrow(t);
         }

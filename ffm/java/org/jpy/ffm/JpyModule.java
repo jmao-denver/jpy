@@ -24,6 +24,12 @@ final class JpyModule {
 
     private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
 
+    /** Before Py_Finalize; see Bootstrap.uninstall. */
+    static void reset() {
+        module = types = typeCallbacks = typeTranslations = null;
+        BYTE_BUFFERS.clear();
+    }
+
     private static MemorySegment stub(String method, FunctionDescriptor fd) {
         try {
             return Linker.nativeLinker().upcallStub(
@@ -230,7 +236,7 @@ final class JpyModule {
                 if (length < 0) {
                     throw CPython.valueError(initError);
                 }
-                return wrapRuntime(java.lang.reflect.Array.newInstance(component.clazz, length));
+                return wrapRuntime(CPython.newJavaArray(component.clazz, length));
             }
             if (CPython.isSequence(a[1])) {
                 return wrapRuntime(Convert.toJavaArray(a[1], component.clazz, false));

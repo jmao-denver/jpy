@@ -1,9 +1,10 @@
 # FFM jpy: design note (session 1 review gate)
 
-Status: session 1 complete. `jpy_gettype_test.py` passes unmodified (8/8) on
-CPython 3.12, 3.13, 3.14, 3.13t and 3.14t with one build, JDK 25, macOS arm64.
-This note lists the decisions later sessions build on. Veto any of them
-before session 2 starts; after that they get expensive to change.
+Status: sessions 1-6 complete. jpy's Python suite passes 151 of 154
+unmodified, and all 81 of jpy's JUnit tests pass, on CPython 3.12, 3.13,
+3.14, 3.13t and 3.14t with one build, JDK 25, macOS arm64. The 3 left are
+`jpy.diag` and `jpy.VerboseExceptions` (session 7). This note was approved
+on 2026-10-01; sections 11-13 were added since.
 
 ## 1. Object model: the C jpy's classes, plus a real metaclass
 
@@ -117,7 +118,13 @@ more permissive behavior.
 `org.jpy.ffm.Bootstrap.install(id(module))`, which adds the Java-implemented
 functions and types to the same module object. `ffm/python/jpyutil.py` is
 the current `jpyutil.py` with one change: it passes the exact libpython path
-and no `jdl` module to `PyLibInitializer`.
+and an empty `jdl` path to `PyLibInitializer` (there is no `jdl` module).
+
+`create_jvm` puts the FFM classes first on the class path, so they win over
+a C jpy jar the caller may still list. `jpy.py` imports ctypes only inside
+the functions that need it, which all run Python-first. Java-first, Java
+may stop and restart Python, and CPython aborts when `_ctypes` is imported
+again after `Py_Finalize`.
 
 libpython is found with `dladdr` on a Python API symbol, not `sysconfig`.
 uv's Python builds report a baked-in `/install` prefix there.
@@ -143,6 +150,10 @@ listed separately in §11.
 | int argument overflow leaves an `OverflowError` pending | same truncated value, error cleared | a pending error surfaces later as `SystemError` |
 | `hashCode() == -1` breaks `hash()` | maps to -2 | see above |
 | failing `type_translations` callback returns None with an error pending | error propagates | same reason |
+| `PyLib.repr` failure returns null with the Python error still pending | returns null, error cleared | same reason |
+| `PyLib.pyDictContains` never releases the converted key | released | reference leak |
+| `PyLib.stopPython` from Python-first calls `PyEval_RestoreThread(NULL)` | does nothing | crash |
+| `getIntValue`/`getLongValue` go through C `long`, 32-bit on Windows | 64-bit everywhere | Windows truncation; same on macOS and Linux |
 
 ## 8. Threading
 
@@ -159,11 +170,11 @@ primitive-array arguments (copied in, copied back when mutable), and
 return-parameter identity. Done in session 5: the buffer protocol on Java
 primitive arrays and `byte_buffer` (§12).
 
-Still open:
-- `diag`, `VerboseExceptions`
-- Java-to-Python direction: `org.jpy.PyLib`, `PyObject`, `PyModule`,
-  `PyObject` arguments and return values (session 6)
-- proxies, verbose exceptions and cause chains (session 7)
+Done in session 6: the Java-to-Python direction (§13), including proxies,
+which the plan had put in session 7.
+
+Still open (session 7): `jpy.diag` and `PyLib.Diag` output,
+`jpy.VerboseExceptions` and Java cause chains in Python errors.
 
 ## 10. Found during session 1
 
@@ -210,6 +221,17 @@ code that works on the C jpy keeps working the same way.
    Data races stay the application's job. "Read-only" limits the Java side
    only, so Python may still write the memory while Java reads it. That gives
    wrong values, not a crash, the same as any shared memory.
+4. **Java can stop and restart Python while PyObjects are still alive**
+   (session 6). `PyLib.stopPython` documents that every PyObject must be
+   released first and that jpy cannot enforce it. Breaking that rule in the
+   C jpy means a wrapper collected after the restart decRefs an address
+   from the old interpreter: undefined behavior, which aborted the process
+   in the FFM port. The FFM jpy enforces the rule: right before
+   `Py_Finalize`, every live PyObject gives up its pointer without a decRef
+   (`PyObjectReferences.forgetAll`), since finalization frees those objects
+   anyway. Afterwards its `close()` does nothing and `getPointer()` throws
+   `IllegalStateException`. Covered by `ffm/tests/java/org/jpy/FfmRestartSafetyTest.java`,
+   which fails with the fix turned off.
 
 ## 12. Buffer protocol on Java arrays: copy semantics, as measured
 
@@ -250,17 +272,79 @@ read-only direct `java.nio.ByteBuffer` through `MemorySegment.asByteBuffer`
 when the wrapper is deallocated, as in the C jpy. Access after that throws
 (§11 item 3).
 
+## 13. Java to Python: org.jpy.PyLib on FFM (session 6)
+
+jpy's Java API is unchanged: `PyLib`, `PyObject`, `PyModule`,
+`PyInputMode`, `PyDictWrapper`, `PyListWrapper`, `PyProxyHandler` and the
+JSR-223 engine compile from `src/main/java` as they are. `ffm/build.sh`
+replaces three classes with copies under `ffm/java/org/jpy`:
+
+- `PyLib`: every former `native` method calls `org.jpy.ffm.PyLibImpl`, a
+  function-by-function port of `org_jpy_PyLib.c`. Same names, same
+  signatures, same pointer-as-`long` convention, same exception messages
+  ("Error in Python interpreter:" plus `traceback.format_exception`), and
+  `KeyError`/`StopIteration` for those Python errors.
+- `DL`: same API, through FFM `dlopen` instead of the `jdl` library.
+- `PyObjectReferences`: adds `forgetAll()` for §11 item 4.
+
+The bridge needs a few package-private members (`new PyObject(long,
+boolean)`, the `KeyError` and `StopIteration` constructors,
+`PyDictWrapper.getPointer`). `PyLib`'s static initializer hands them to
+`org.jpy.ffm.PyObjects` as hooks, so `org.jpy`'s public API does not grow.
+
+Each entry point takes the GIL with `PyGILState_Ensure` and refuses with a
+`RuntimeException` while the interpreter is finalizing, as the C jpy's
+`JPy_BEGIN_GIL_STATE` does. A pending Python error is read and translated
+while the GIL is still held.
+
+Python-first and Java-first both work:
+
+| | Python-first (`jpyutil.init_jvm`) | Java-first (`PyLib.startPython`) |
+|---|---|---|
+| libpython | already loaded; `jpy.py` passes `-Djpy.pythonLib` | `jpy.pythonLib` property, `dlopen`ed `RTLD_GLOBAL` |
+| `jpy` module | installed by `create_jvm` | imported by `PyLib`, then `Bootstrap.installEmbedded` sets `jpy._embedded` |
+| `jpy.has_jvm()` | true | true, and `create_jvm` does nothing |
+| `PyLib.stopPython` | does nothing (Java does not own Python) | `Bootstrap.uninstall`, then `Py_Finalize` |
+
+`jpy.jpyLib` names `jpy.py`. Its directory goes on `sys.path`, the way the
+C jpy uses the directory of its extension module. Java-first, the
+interpreter finds its standard library through `PYTHONHOME`
+(`ffm/junit.sh` sets it from the chosen Python's `sys.base_prefix`).
+
+Ported details worth knowing:
+- `executeScript` compiles the file's bytes with its name
+  (`Py_CompileStringExFlags`, then `PyEval_EvalCode`). The C jpy hands a
+  `FILE*` to `PyRun_File`. The parse is the same, coding cookie included,
+  and so are tracebacks, with no C runtime `FILE*` crossing the boundary.
+- Embedded mode replaces `sys.stdout` and `sys.stderr` with a module
+  `jpy_stdout` whose `write` prints to the process's stdout, as the C jpy
+  does. The module is written in Python here.
+- `getCurrentGlobals`/`getCurrentLocals` use `PyEval_GetFrameGlobals` and
+  `PyEval_GetFrameLocals` on 3.13+, like the C jpy.
+- A Java `OutOfMemoryError` while allocating a Java array for Python
+  (`jpy.array`, sequence arguments) raises Python's `MemoryError`, as JNI's
+  failing `New<Type>Array` does in the C jpy. `jpy_cleanup_thread_test.py`
+  checks it.
+
+`EmbeddableTestJunit` is not run: Maven does not run it either (its name
+does not match surefire's patterns), and it fails on the C jpy too, because
+`EmbeddableTest.assertFalse` throws when its argument is false.
+
 ## How to reproduce
 
 ```
-ffm/build.sh                         # compile FFM Java -> ffm/build/classes, FFM fixtures -> ffm/build/fixtures
-ffm/build-fixtures.sh                # jpy's Java test fixtures -> target/test-classes
+ffm/build.sh                         # FFM bridge + jpy's src/main/java -> ffm/build/classes; FFM fixtures -> ffm/build/fixtures
+ffm/build-fixtures.sh                # jpy's src/test/java -> target/test-classes; ffm/tests/java -> ffm/build/tests
 ffm/test.sh jpy_gettype_test.py      # one jpy test file, unmodified, on 3.12
 ffm/matrix.sh jpy_gettype_test.py    # same on 3.12, 3.13, 3.14, 3.13t, 3.14t
 <numpy-python> ffm/suite.py          # jpy's 22 test files, then the FFM extras in ffm/tests
+ffm/junit.sh                         # jpy's JUnit tests (Java-first), then the FFM JUnit extras
+ffm/matrix.sh junit                  # same on all five interpreters
 ```
 
-`ffm/tests/` holds unittest files for behavior only the FFM jpy has (the C
-jpy fails them by design, so they stay out of `src/test/python` while both
-implementations exist): `ffm_bridge_test.py` (identity, calls, overloads,
-fields, arrays, errors), `ffm_static_fields_test.py` (§11) and `ffm_buffer_test.py` (§12; all but the late-access test also pass on the C jpy).
+`ffm/tests/` holds tests for behavior only the FFM jpy has (the C jpy fails
+them by design, so they stay out of `src/test` while both implementations
+exist): `ffm_bridge_test.py` (identity, calls, overloads, fields, arrays,
+errors), `ffm_static_fields_test.py` (§11), `ffm_buffer_test.py` (§12; all
+but the late-access test also pass on the C jpy) and
+`java/org/jpy/FfmRestartSafetyTest.java` (§11 item 4).

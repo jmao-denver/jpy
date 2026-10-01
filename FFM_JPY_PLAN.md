@@ -40,7 +40,12 @@ Details and rules in `ffm/DESIGN.md` §11.
    exception instead of reading freed memory** (decided 2026-10-01). The
    documented rule is unchanged. Data races on shared memory stay the
    application's job.
-4. **No compiled code at all.** One universal wheel plus a jar, instead of
+4. **Java can stop and restart Python while PyObjects are still alive**
+   (session 6). The C jpy documents that it cannot enforce "release every
+   PyObject first", and breaking it is undefined behavior. The FFM jpy
+   drops each live PyObject's pointer right before `Py_Finalize`, so nothing
+   from the old interpreter is decRef'd in the new one.
+5. **No compiled code at all.** One universal wheel plus a jar, instead of
    ~38 binary wheels.
 
 ## Architecture
@@ -51,6 +56,9 @@ JNI, reached from Python with ctypes:
 1. **Python-first bootstrap**: a pure-Python loader calls
    `JNI_CreateJavaVM` through ctypes. Java then adds the bridge to the
    running `jpy` module through FFM. No compiled Python extension.
+
+Java-first needs no JNI at all: `org.jpy.PyLib` loads libpython, calls
+`Py_Initialize` and imports `jpy` through FFM (session 6).
 
 **Correction (2026-10-01, session 5): the buffer protocol needs no
 pinning.** Earlier versions of this plan said jpy exposes Java primitive
@@ -139,8 +147,15 @@ Speedups are a bonus concentrated in the scalar-UDF path.
 | 2. Objects, methods, fields | **done 2026-10-01**: `jpy_obj_test.py` 2/2, `jpy_field_test.py` 3/3 (already green after session 1) |
 | 3. Overload resolution | **done 2026-10-01**: `jpy_overload_test.py` 18/18, `jpy_typeres_test.py` 3/3; added `jpy.cast`, `jpy.array` |
 | 4. Conversions wired into calls | **done 2026-10-01**: `jpy_typeconv_test.py` 11/11, `jpy_retval_test.py` 12/12, `jpy_modretparam_test.py` 7/7; added `jpy.convert`, `jpy.type_callbacks`, `jpy.JMethod`, Python buffers as primitive-array arguments with write-back, return-parameter identity. All green on 3.12, 3.13, 3.14, 3.13t, 3.14t |
-
 | 5. Arrays + buffer protocol | **done 2026-10-01**: `jpy_array_test.py` 23/23 on 3.12, 3.13, 3.14, 3.13t, 3.14t; copy semantics measured on the C jpy and ported in pure FFM (no pinning, no JNI); added `jpy.byte_buffer`; `ffm/tests/ffm_buffer_test.py` parity tests pass on both the C and FFM jpy |
+| 6. Java-side lifecycle | **done 2026-10-01**: all 81 of jpy's JUnit tests (the 8 classes Maven runs, `PyProxyTest` included) and every Python test that crosses back into Java (`eval_exec`, `mt_eval_exec`, `reachability_fence`, `cleanup_thread`, `typeconv_test_pyobj`, `java_embeddable`) pass on 3.12, 3.13, 3.14, 3.13t, 3.14t. `org.jpy.PyLib` ported to FFM (`PyLibImpl`), Java-first startup without JNI, interpreter restart. FFM JUnit extra `FfmRestartSafetyTest` 1/1 |
+
+Full suite after session 6 (2026-10-01): **151/154 pass, 0 failures**, 3
+errors, 0 crashes; 20 of 22 files fully green. FFM extras 37/37. JUnit:
+81/81 plus the FFM extra 1/1, on all five interpreters. The 3 errors are
+`jpy.diag` (2) and `jpy.VerboseExceptions` (1), both session 7.
+`EmbeddableTestJunit` is not counted: Maven does not run it, and it fails on
+the C jpy too (`EmbeddableTest.assertFalse` asserts the opposite).
 
 Full suite after session 5 (2026-10-01): **108/154 pass, 0 failures**, 46
 errors, 0 crashes; 13 of 22 files fully green. FFM extras 37/37 (byte_buffer late-access check added). Remaining
@@ -178,7 +193,7 @@ two focused attempts are skipped and listed, not hidden.
 4. **Conversions wired into calls** — `jpy_typeconv_test.py`, `jpy_retval_test.py`
 5. **Arrays + buffer protocol** — `jpy_array_test.py`
 6. **Java-side lifecycle** — `PyObjectTest`, `PyModuleTest`, cleanup/reachability
-7. **Proxies + exception translation** — `PyProxyTest`, exception tests
+7. **Diagnostics + exception translation** — `jpy_diag_test.py`, `jpy.VerboseExceptions` in `jpy_exception_test.py`, Java cause chains (`PyProxyTest` already passed in session 6)
 8. **Full sweep** — both suites on 3.12, then 3.13/3.14, then 3.13t/3.14t
 9. **Linux and Windows** — the loader (jvm.dll via ctypes) and libpython discovery are untested off macOS; needs Linux/Windows boxes or CI
 

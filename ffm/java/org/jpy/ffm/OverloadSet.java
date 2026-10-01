@@ -469,7 +469,7 @@ final class OverloadSet {
                     + " bytes, but got " + len + " (expected item size was " + javaItemSize
                     + " bytes, got " + itemsize + ")");
         }
-        Object array = Array.newInstance(component, (int) itemCount);
+        Object array = CPython.newJavaArray(component, (int) itemCount);
         if (!output) {
             Buffers.copyIn(buf.data(), array, component, (int) itemCount);
         }
@@ -496,7 +496,7 @@ final class OverloadSet {
      * into the var-args array; this builds the same array item by item.
      */
     private static Object varArgsArray(Class<?> component, MemorySegment args, int from, int argCount) {
-        Object array = Array.newInstance(component, argCount - from);
+        Object array = CPython.newJavaArray(component, argCount - from);
         for (int k = from; k < argCount; k++) {
             MemorySegment item = CPython.tupleGet(args, k);
             Object value = component.isPrimitive()
