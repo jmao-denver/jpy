@@ -109,16 +109,43 @@ public final class JTypes {
     static void addClassAttribute(JavaType jt) {
         MemorySegment jclass = JObjects.wrap(jt.clazz, classType);
         try {
-            CPython.setAttr(jt.pyType, "jclass", jclass);
+            publish(jt, "jclass", jclass);
         } finally {
             CPython.decRef(jclass);
         }
         MemorySegment jclassname = CPython.newStr(jt.name);
         try {
-            CPython.setAttr(jt.pyType, "jclassname", jclassname);
+            publish(jt, "jclassname", jclassname);
         } finally {
             CPython.decRef(jclassname);
         }
+    }
+
+    /**
+     * Puts a bridge-owned entry into a Java type's dict. Goes through type's own setattr, not
+     * jpy.JTypeMeta's hook, so publishing never triggers resolution or static-field writes.
+     */
+    private static void publish(JavaType jt, String name, MemorySegment value) {
+        CPython.typeSetAttr(jt.pyType, name, value);
+        jt.dictNames.add(name);
+    }
+
+    /**
+     * The public static non-final field 'name' visible from jt, or null. Walks the superclass
+     * chain nearest first; a name the bridge put in a dict at that level (a method, a constant, an
+     * instance field) wins, so nothing that resolves today changes meaning.
+     */
+    static Field findStaticField(JavaType jt, String name) {
+        for (JavaType t = jt; t != null; t = t.superType) {
+            if (t.dictNames.contains(name)) {
+                return null;
+            }
+            Field f = t.staticFields.get(name);
+            if (f != null) {
+                return f;
+            }
+        }
+        return null;
     }
 
     /** JType_InitSlots, as a heap type built from a PyType_Spec. */
@@ -144,11 +171,11 @@ public final class JTypes {
         if (dotless) {
             slots.add(new long[]{CPython.Py_tp_members, MODULE_PLACEHOLDER_MEMBER.address()});
         }
-        MemorySegment pyType = fromSpec(jt.name, CPython.Py_TPFLAGS_BASETYPE, slots, base);
+        MemorySegment pyType = fromSpec(jt.name, CPython.Py_TPFLAGS_BASETYPE, slots, base, Slots.metaType);
         if (dotless) {
             MemorySegment builtins = CPython.newStr("builtins");
             try {
-                CPython.setAttr(pyType, "__module__", builtins);
+                CPython.typeSetAttr(pyType, "__module__", builtins);
             } finally {
                 CPython.decRef(builtins);
             }
@@ -177,8 +204,15 @@ public final class JTypes {
         MODULE_PLACEHOLDER_MEMBER = members;
     }
 
-    /** PyType_FromSpecWithBases over a PyType_Spec and PyType_Slot[] laid out in native memory. */
     static MemorySegment fromSpec(String name, long flags, List<long[]> slots, MemorySegment base) {
+        return fromSpec(name, flags, slots, base, null);
+    }
+
+    /**
+     * PyType_FromMetaclass (or PyType_FromSpecWithBases when metaclass is null) over a
+     * PyType_Spec and PyType_Slot[] laid out in native memory.
+     */
+    static MemorySegment fromSpec(String name, long flags, List<long[]> slots, MemorySegment base, MemorySegment metaclass) {
         try (Arena a = Arena.ofConfined()) {
             MemorySegment slotArray = a.allocate(16L * (slots.size() + 1), 8);
             for (int i = 0; i < slots.size(); i++) {
@@ -196,6 +230,10 @@ public final class JTypes {
             spec.set(JAVA_INT, 16, (int) flags);
             spec.set(ADDRESS, 24, slotArray);
             MemorySegment bases = base == null ? CPython.NULL : base;
+            if (metaclass != null) {
+                return CPython.check((MemorySegment) CPython.PyType_FromMetaclass.invokeExact(
+                        metaclass, CPython.NULL, spec, bases));
+            }
             return CPython.check((MemorySegment) CPython.PyType_FromSpecWithBases.invokeExact(spec, bases));
         } catch (Throwable t) {
             throw CPython.rethrow(t);
@@ -300,13 +338,17 @@ public final class JTypes {
         os.pyObj = py;
         OverloadSet.BY_PYOBJ.put(py.address(), os);
         try {
-            CPython.setAttr(jt.pyType, os.name, py);
+            publish(jt, os.name, py);
         } finally {
             CPython.decRef(py);
         }
     }
 
-    /** JType_ProcessClassFields: static finals become plain values, instance fields become jpy.JField. */
+    /**
+     * JType_ProcessClassFields: static finals become plain values, instance fields become
+     * jpy.JField. Static non-final fields, which the C jpy skips, are recorded and served live
+     * by jpy.JTypeMeta and the instance slots (an improvement over the C jpy).
+     */
     private static void processFields(JavaType jt) {
         Field[] fields = jt.isInterface ? jt.clazz.getFields() : jt.clazz.getDeclaredFields();
         for (Field f : fields) {
@@ -327,7 +369,7 @@ public final class JTypes {
                 }
                 MemorySegment py = Convert.toPython(value, fieldType.clazz);
                 try {
-                    CPython.setAttr(jt.pyType, f.getName(), py);
+                    publish(jt, f.getName(), py);
                 } finally {
                     CPython.decRef(py);
                 }
@@ -337,12 +379,13 @@ public final class JTypes {
                 info.pyObj = py;
                 JFieldInfo.BY_PYOBJ.put(py.address(), info);
                 try {
-                    CPython.setAttr(jt.pyType, f.getName(), py);
+                    publish(jt, f.getName(), py);
                 } finally {
                     CPython.decRef(py);
                 }
+            } else {
+                jt.staticFields.put(f.getName(), usable);
             }
-            // static non-final fields are skipped, as in the C jpy
         }
     }
 

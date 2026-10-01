@@ -6,6 +6,7 @@ import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Array;
+import java.lang.reflect.Field;
 import java.util.List;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
@@ -56,12 +57,23 @@ final class Slots {
     static final MemorySegment FIELD_REPR = stub("fieldRepr", FunctionDescriptor.of(ADDRESS, ADDRESS));
     static final MemorySegment FIELD_DEALLOC = stub("fieldDealloc", FunctionDescriptor.ofVoid(ADDRESS));
 
+    // ---- stubs for jpy.JTypeMeta, the metaclass of all Java types ----
+
+    static final MemorySegment META_GETATTRO = stub("metaGetattro", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
+    static final MemorySegment META_SETATTRO = stub("metaSetattro", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+
+    static MemorySegment metaType;
     static MemorySegment overloadedMethodType;
     static MemorySegment fieldType;
 
-    /** Creates jpy.JType, jpy.JOverloadedMethod and jpy.JField and adds them to the module. */
+    /** Creates jpy.JTypeMeta, jpy.JType, jpy.JOverloadedMethod and jpy.JField and adds them to the module. */
     static void createModuleTypes(MemorySegment module) {
         long noNew = CPython.Py_TPFLAGS_DISALLOW_INSTANTIATION;
+        // A real heap subclass of `type`; Java types are created through PyType_FromMetaclass with it.
+        metaType = JTypes.fromSpec("jpy.JTypeMeta", CPython.Py_TPFLAGS_BASETYPE, List.of(
+                new long[]{CPython.Py_tp_getattro, META_GETATTRO.address()},
+                new long[]{CPython.Py_tp_setattro, META_SETATTRO.address()}), CPython.PyType_Type);
+        CPython.setAttr(module, "JTypeMeta", metaType);
         JTypes.rootType = JTypes.fromSpec("jpy.JType", CPython.Py_TPFLAGS_BASETYPE | noNew, List.of(), null);
         overloadedMethodType = JTypes.fromSpec("jpy.JOverloadedMethod", noNew, List.of(
                 new long[]{CPython.Py_tp_call, OM_CALL.address()},
@@ -74,6 +86,73 @@ final class Slots {
         CPython.setAttr(module, "JType", JTypes.rootType);
         CPython.setAttr(module, "JOverloadedMethod", overloadedMethodType);
         CPython.setAttr(module, "JField", fieldType);
+    }
+
+    // ------------------------------------------------------------------
+    // jpy.JTypeMeta slots (class-level attribute access on Java types)
+    // ------------------------------------------------------------------
+
+    /**
+     * T.name: resolves T on first class-level access (the C jpy only resolves on instance access),
+     * serves public static non-final fields live (the C jpy skips them), and otherwise behaves
+     * exactly like type.__getattribute__.
+     */
+    static MemorySegment metaGetattro(MemorySegment type, MemorySegment name) {
+        try {
+            JavaType jt = JTypes.byPyType(type.address());
+            if (jt != null) {
+                // Python's own introspection (T.__dict__, T.__name__, T.__mro__, ...) must not
+                // resolve: jpy_typeres_test.py checks via T.__dict__ that types resolve late.
+                if (!jt.resolved && !jt.resolving && !isDunder(CPython.toJavaString(name))) {
+                    JTypes.resolve(jt);
+                }
+                Field f = jt.resolved && hasStaticFields(jt)
+                        ? JTypes.findStaticField(jt, CPython.toJavaString(name)) : null;
+                if (f != null) {
+                    return JFieldInfo.read(f, null);
+                }
+            }
+            return CPython.typeGetAttrOrNull(type, name);
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    /** T.name = value: writes public static non-final Java fields; everything else as type.__setattr__. */
+    static int metaSetattro(MemorySegment type, MemorySegment name, MemorySegment value) {
+        try {
+            JavaType jt = JTypes.byPyType(type.address());
+            if (jt != null && !value.equals(NULL)) {
+                if (!jt.resolved && !jt.resolving) {
+                    JTypes.resolve(jt);
+                }
+                Field f = jt.resolved && hasStaticFields(jt)
+                        ? JTypes.findStaticField(jt, CPython.toJavaString(name)) : null;
+                if (f != null) {
+                    JFieldInfo.writeStatic(f, value);
+                    return 0;
+                }
+            }
+            return CPython.typeSetAttr(type, name, value);
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return -1;
+        }
+    }
+
+    private static boolean isDunder(String name) {
+        return name.length() > 4 && name.startsWith("__") && name.endsWith("__");
+    }
+
+    /** Cheap pre-check so ordinary attribute access never converts the name to a Java string. */
+    private static boolean hasStaticFields(JavaType jt) {
+        for (JavaType t = jt; t != null; t = t.superType) {
+            if (!t.staticFields.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------
@@ -117,6 +196,14 @@ final class Slots {
             }
             MemorySegment value = CPython.genericGetAttrOrNull(self, name);
             if (value.equals(NULL)) {
+                // obj.STATIC_FIELD reads a public static non-final field, as Java allows
+                if (jt != null && jt.resolved && hasStaticFields(jt) && CPython.errMatches(CPython.PyExc_AttributeError)) {
+                    Field f = JTypes.findStaticField(jt, CPython.toJavaString(name));
+                    if (f != null) {
+                        CPython.errClear();
+                        return JFieldInfo.read(f, null);
+                    }
+                }
                 return NULL;
             }
             if (OverloadSet.BY_PYOBJ.containsKey(value.address())) {
@@ -144,6 +231,18 @@ final class Slots {
             MemorySegment old = CPython.genericGetAttrOrNull(self, name);
             if (old.equals(NULL)) {
                 CPython.errClear();
+                // obj.STATIC_FIELD = v writes a public static non-final field, as Java allows
+                JavaType jt = JObjects.javaTypeOf(self);
+                if (jt != null && !value.equals(NULL)) {
+                    if (!jt.resolved) {
+                        JTypes.resolve(jt);
+                    }
+                    Field f = hasStaticFields(jt) ? JTypes.findStaticField(jt, CPython.toJavaString(name)) : null;
+                    if (f != null) {
+                        JFieldInfo.writeStatic(f, value);
+                        return 0;
+                    }
+                }
             } else {
                 JFieldInfo field = JFieldInfo.BY_PYOBJ.get(old.address());
                 CPython.decRef(old);

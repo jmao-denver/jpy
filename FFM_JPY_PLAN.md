@@ -23,6 +23,22 @@ that is a drop-in for the current JNI jpy:
 | quirks replicated, not fixed | drop-in means bug-for-bug: smallest-box untyped ints (5 -> Byte), char <-> int, truthiness bools, silent narrowing truncation, string-flattened exceptions |
 | dual-track release | Deephaven drives this, but jpy has other users (ESA SNAP et al.) on older stacks. FFM jpy ships as a new major version beside a maintained JNI line; the old build matrix retires only when the JNI line does |
 
+## Improvements over the C jpy
+
+Additive changes: code that works on the C jpy keeps working the same way.
+Details and rules in `ffm/DESIGN.md` §11.
+
+1. **Public static non-final fields are visible and writable from Python,
+   live**, through the class and through instances (decided 2026-10-01).
+   The C jpy skips them because its metatype hook crashed the interpreter.
+   The FFM jpy adds a real metaclass, `jpy.JTypeMeta`; `jpy.JType` stays the
+   base class of every Java class. Only `type(T)` changes, from `type` to
+   `jpy.JTypeMeta`.
+2. **Class-level access to a Java member resolves an unresolved type.** The
+   C jpy raises `AttributeError` until an instance attribute was touched.
+3. **No compiled code at all.** One universal wheel plus a jar, instead of
+   ~38 binary wheels; heap arrays are pinned through FFM calls into JNI.
+
 ## Architecture
 
 All Java and Python, with no compiled code. Two pieces still go through JNI,

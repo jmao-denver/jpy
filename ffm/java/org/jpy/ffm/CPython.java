@@ -108,6 +108,9 @@ public final class CPython {
     /** Function pointer used as Py_tp_new for instantiable Java types. */
     public static final MemorySegment PyType_GenericNew_ADDR = sym("PyType_GenericNew");
 
+    /** The `type` type object, base of jpy.JTypeMeta. */
+    public static final MemorySegment PyType_Type = sym("PyType_Type");
+
     // ---- downcall handles ----
 
     static final MethodHandle Py_IncRef = dc("Py_IncRef", FunctionDescriptor.ofVoid(ADDRESS));
@@ -128,6 +131,7 @@ public final class CPython {
     static final MethodHandle PyObject_Call = dc("PyObject_Call", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, ADDRESS));
 
     static final MethodHandle PyType_FromSpecWithBases = dc("PyType_FromSpecWithBases", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
+    static final MethodHandle PyType_FromMetaclass = dc("PyType_FromMetaclass", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle PyType_GetSlot = dc("PyType_GetSlot", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT));
     static final MethodHandle PyType_GenericAlloc = dc("PyType_GenericAlloc", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
     static final MethodHandle PyMethod_New = dc("PyMethod_New", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
@@ -165,6 +169,59 @@ public final class CPython {
 
     /** Calls a C function pointer of type void(*)(void*), e.g. a tp_free slot. */
     static final MethodHandle CALL_VOID_PTR = LINKER.downcallHandle(FunctionDescriptor.ofVoid(ADDRESS));
+
+    /** type's own tp_getattro and tp_setattro, which jpy.JTypeMeta's hooks delegate to. */
+    static final MethodHandle TYPE_GETATTRO;
+    static final MethodHandle TYPE_SETATTRO;
+
+    static {
+        try {
+            TYPE_GETATTRO = LINKER.downcallHandle(
+                    (MemorySegment) PyType_GetSlot.invokeExact(PyType_Type, Py_tp_getattro),
+                    FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
+            TYPE_SETATTRO = LINKER.downcallHandle(
+                    (MemorySegment) PyType_GetSlot.invokeExact(PyType_Type, Py_tp_setattro),
+                    FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        } catch (Throwable t) {
+            throw new ExceptionInInitializerError(t);
+        }
+    }
+
+    /** type.__getattribute__(t, name): new reference or NULL with an error set. */
+    public static MemorySegment typeGetAttrOrNull(MemorySegment type, MemorySegment name) {
+        try {
+            return (MemorySegment) TYPE_GETATTRO.invokeExact(type, name);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** type.__setattr__(t, name, value) (value NULL deletes); returns 0 or -1 with an error set. */
+    public static int typeSetAttr(MemorySegment type, MemorySegment name, MemorySegment value) {
+        try {
+            return (int) TYPE_SETATTRO.invokeExact(type, name, value);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** Sets a type attribute through type's own setattr, bypassing jpy.JTypeMeta's hook. */
+    public static void typeSetAttr(MemorySegment type, String name, MemorySegment value) {
+        MemorySegment key = newStr(name);
+        try {
+            if (typeSetAttr(type, key, value) != 0) throw PyErrAlreadySet.INSTANCE;
+        } finally {
+            decRef(key);
+        }
+    }
+
+    public static boolean errMatches(MemorySegment excType) {
+        try {
+            return (int) PyErr_ExceptionMatches.invokeExact(excType) != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
 
     // ---- exceptions used to cross the upcall boundary ----
 

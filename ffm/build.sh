@@ -7,3 +7,7 @@ rm -rf build/classes
 mkdir -p build/classes
 "$JAVA_HOME/bin/javac" --release 22 -Xlint:-options -d build/classes $(find java -name '*.java')
 echo "built ffm/build/classes"
+rm -rf build/fixtures
+mkdir -p build/fixtures
+"$JAVA_HOME/bin/javac" --release 11 -Xlint:-options -d build/fixtures $(find fixtures -name '*.java')
+echo "built ffm/build/fixtures"

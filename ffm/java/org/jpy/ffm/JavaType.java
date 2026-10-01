@@ -25,6 +25,16 @@ public final class JavaType {
     /** The "__jinit__" overloads; null if the type has no public constructor or is unresolved. */
     OverloadSet constructors;
 
+    /**
+     * Public static non-final fields declared by this type, served live by
+     * jpy.JTypeMeta (class access) and the instance slots. The C jpy skips
+     * these fields entirely. Filled during resolution.
+     */
+    final java.util.Map<String, java.lang.reflect.Field> staticFields = new java.util.HashMap<>();
+
+    /** Names resolution put into this type's dict (methods, constants, instance fields). */
+    final java.util.Set<String> dictNames = new java.util.HashSet<>();
+
     JavaType(Class<?> clazz, JavaType superType, JavaType componentType) {
         this.clazz = clazz;
         this.name = clazz.getName();

@@ -5,21 +5,44 @@ CPython 3.12, 3.13, 3.14, 3.13t and 3.14t with one build, JDK 25, macOS arm64.
 This note lists the decisions later sessions build on. Veto any of them
 before session 2 starts; after that they get expensive to change.
 
-## 1. Object model: mirror the C jpy exactly
+## 1. Object model: the C jpy's classes, plus a real metaclass
 
 Every Java class becomes a Python heap type built with
-`PyType_FromSpecWithBases`. Its Python base is the Python type of its Java
+`PyType_FromMetaclass`. Its Python base is the Python type of its Java
 superclass. Interfaces get `java.lang.Object` as base (bcdev/jpy#57).
 `java.lang.Object` and the primitive types derive from `jpy.JType`, a plain
-base class. Finished Java types are instances of `type`, as in the C jpy.
+base class, so every Java class derives from `jpy.JType` exactly as in the
+C jpy. Deephaven relies on this: 8 `isinstance(obj, jpy.JType)` checks mean
+"is this a Java object", and 44 files use `jpy.JType` as the type hint.
 
-Why: this is the C jpy's object model, observable to users through `type()`,
-`isinstance`, `issubclass`, MRO and `str(T)`. Copying it is the cheapest way
-to parity.
+**Decided 2026-10-01:** Java types are instances of a new metaclass,
+`jpy.JTypeMeta`, a real heap subclass of `type` built with
+`PyType_FromSpecWithBases(spec, &PyType_Type)`. Its `__getattribute__` and
+`__setattr__` are Java upcalls that delegate to `type`'s own slots for
+everything they do not handle.
 
-Alternative rejected: a real metaclass (`jpy.JType` as the type of Java
-types). Cleaner, and it would allow lazy resolution on class attribute
-access, but `type(T)` would change.
+| expression | C jpy | FFM jpy |
+|---|---|---|
+| `type(java_obj)` | the Java class | same |
+| `issubclass(String, jpy.JType)` | True | same |
+| `isinstance(java_obj, jpy.JType)` | True | same |
+| `type(String)` | `type` | `jpy.JTypeMeta` |
+| `type(jpy.JTypeMeta)` | n/a | `type` |
+| `str(String)` | `<class 'java.lang.String'>` | same |
+
+The only visible change is `type(T)`. It is the same pattern as
+`abc.ABCMeta` or `enum.EnumMeta`. Nothing in jpy's tests or in
+deephaven-core depends on `type(T) is type`.
+
+Why the C jpy has no working metaclass: its `JType` metatype derives from
+`object`, not `type`. The code built Java types as hand-filled static type
+structs and tried to switch their type to `JType` afterwards. Its own
+comment in `JType_InitSlots` says that crashed the interpreter, so the
+metatype's hooks were never called. A real `type` subclass through the 3.12
+API does not have that problem: `ffm-prototype/src/ffm/M11.java` proves it
+(10/10 on 3.12, passes on 3.13t), and the full jpy suite runs unchanged.
+
+The metaclass enables the improvements in §11.
 
 ## 2. All bridge state lives in Java, keyed by Python object address
 
@@ -53,13 +76,20 @@ more permissive behavior.
 - Resolving a type creates, unresolved, the Python types of every parameter,
   return and field type. This is eager, like the C jpy, and it is
   observable: `jpy_typeres_test.py` checks `jpy.types` for them.
-- Unresolved types resolve on the first attribute access on an instance.
-  Class-level access on an unresolved type does not resolve it. This is a C
-  jpy quirk (its `JType_getattro` is never called). Kept.
+- Unresolved types resolve on the first attribute access on an instance, as
+  in the C jpy, and also on the first class-level access to a Java member
+  (improvement 2 in §11). Python's own introspection names (`T.__dict__`,
+  `T.__name__`, `T.__mro__`, any `__dunder__`) do not resolve, which keeps
+  the laziness `jpy_typeres_test.py` checks through `T.__dict__`.
 - Methods come from `Class.getMethods()` (public, inherited, no bridges).
   Fields come from `getDeclaredFields()` (public only): static finals become
-  plain values in the type dict, instance fields become `jpy.JField`, and
-  static non-final fields are skipped. All as in the C jpy.
+  plain values in the type dict and instance fields become `jpy.JField`, as
+  in the C jpy. Static non-final fields, which the C jpy skips, are served
+  live (improvement 1 in §11).
+- The bridge writes its own dict entries (methods, constants, fields,
+  `jclass`) through `type`'s setattr directly, bypassing `jpy.JTypeMeta`'s
+  hook, so building or resolving a type never triggers resolution or
+  static-field writes by accident.
 
 ## 4. Calls: jpy's scoring, reflection, GIL released
 
@@ -105,6 +135,9 @@ uv's Python builds report a baked-in `/install` prefix there.
 
 ## 7. Known deviations from the C jpy (all deliberate)
 
+Small behavior differences that fix C jpy bugs. Feature-level gains are
+listed separately in §11.
+
 | C jpy | FFM jpy | why |
 |---|---|---|
 | int argument overflow leaves an `OverflowError` pending | same truncated value, error cleared | a pending error surfaces later as `SystemError` |
@@ -136,6 +169,32 @@ was rebased onto `master` (2.2.0-dev). The C code was re-checked against
 `master`. Relevant changes were already matched or have now been applied:
 unresolved super types, `jclassname`, and the `type_translations` changes.
 
+## 11. Improvements over the C jpy
+
+Changes that make the FFM jpy strictly more capable. Each one is additive:
+code that works on the C jpy keeps working the same way.
+
+1. **Public static non-final fields are visible and writable from Python,
+   live** (decided 2026-10-01). The C jpy skips them entirely, because its
+   metatype hook never worked. Reads and writes go to the Java field itself,
+   through the class (`T.counter`, `T.counter = 5`) and through instances
+   (`obj.counter`), and through subclasses to the declaring class. Rules
+   that keep existing behavior intact:
+   - A method, constant or instance field with the same name keeps the
+     name, nearest class first, so nothing that resolves today changes.
+   - `static final` fields stay plain values in the type dict, as in the
+     C jpy.
+   - Private and protected fields stay invisible.
+   - Writes use the strict typed conversion: a wrong Python type raises
+     `ValueError` and leaves the field unchanged. Instance-field writes keep
+     the C jpy's lenient conversion for parity.
+
+   Verified by `ffm/smoke_static_fields.py` (23 checks, also on 3.14t).
+2. **Class-level access to a Java member resolves an unresolved type.** In
+   the C jpy, `jpy.get_type(name, resolve=False).someStaticMethod` raises
+   `AttributeError` until some instance attribute was touched. Dunder
+   introspection still does not resolve (see §3).
+
 ## How to reproduce
 
 ```
@@ -144,4 +203,6 @@ ffm/build-fixtures.sh                # jpy's Java test fixtures -> target/test-c
 ffm/test.sh jpy_gettype_test.py      # one jpy test file, unmodified, on 3.12
 ffm/matrix.sh jpy_gettype_test.py    # same on 3.12, 3.13, 3.14, 3.13t, 3.14t
 ffm/py.sh ffm/smoke_session1.py      # 19 extra checks: calls, fields, errors, identity
+ffm/py.sh ffm/smoke_static_fields.py # 23 checks: jpy.JTypeMeta and live static fields
+<numpy-python> ffm/suite.py          # all 22 jpy Python test files, scoreboard
 ```
