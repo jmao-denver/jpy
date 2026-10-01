@@ -175,9 +175,14 @@ Speedups are a bonus concentrated in the scalar-UDF path.
 | 5. Arrays + buffer protocol | **done 2026-10-01**: `jpy_array_test.py` 23/23 on 3.12, 3.13, 3.14, 3.13t, 3.14t; copy semantics measured on the C jpy and ported in pure FFM (no pinning, no JNI); added `jpy.byte_buffer`; `ffm/tests/ffm_buffer_test.py` parity tests pass on both the C and FFM jpy |
 | 6. Java-side lifecycle | **done 2026-10-01**: all 81 of jpy's JUnit tests (the 8 classes Maven runs, `PyProxyTest` included) and every Python test that crosses back into Java (`eval_exec`, `mt_eval_exec`, `reachability_fence`, `cleanup_thread`, `typeconv_test_pyobj`, `java_embeddable`) pass on 3.12, 3.13, 3.14, 3.13t, 3.14t. `org.jpy.PyLib` ported to FFM (`PyLibImpl`), Java-first startup without JNI |
 | 7. Diagnostics + exception translation | **done 2026-10-01**: `jpy_diag_test.py` 2/2, `jpy_exception_test.py` 5/5, FFM extra `ffm_exceptions_test.py` 7/7 (the C jpy's exact verbose format, line by line), all on 3.12, 3.13, 3.14, 3.13t, 3.14t. Added `jpy.diag`, `jpy.VerboseExceptions`, Java cause chains. Not ported: the C jpy's diagnostic trace printouts |
+| 8. Full sweep | **done 2026-10-01**: `ffm/sweep.sh`. On 3.12, 3.13, 3.14, 3.13t and 3.14t, each in a venv with numpy 2.5.3: jpy's Python suite **154/154**, FFM extras 49/49, jpy's JUnit tests 81/81. On 3.13t and 3.14t the GIL stays off with jpy and numpy loaded, and 3 more full runs each were green. New FFM extra `ffm_threads_test.py`: 16 threads at once create and resolve Java types, call overloads, convert values and call back from Java into Python; 10/10 runs green on each free-threaded build |
 
 Full suite after session 7 (2026-10-01): **154/154 pass** on 3.12, all 22
 files green. FFM extras 44/44. JUnit 81/81 on all five interpreters.
+
+The definition of done is met on macOS arm64: jpy's own test suites pass
+unmodified on every supported interpreter. Session 9 (Linux, Windows)
+remains.
 
 Introspection parity (2026-10-01): about 800 facts about types, methods and
 fields compared with the C jpy on all five interpreters

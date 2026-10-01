@@ -1,10 +1,10 @@
 # FFM jpy: design note (session 1 review gate)
 
-Status: sessions 1-7 complete. jpy's Python suite passes 154 of 154
-unmodified on CPython 3.12, and all 81 of jpy's JUnit tests pass on 3.12,
-3.13, 3.14, 3.13t and 3.14t, with one build, JDK 25, macOS arm64. The full
-Python suite on the other four interpreters is session 8. This note was
-approved on 2026-10-01; sections 11-14 were added since.
+Status: sessions 1-8 complete. jpy's Python suite (154/154) and JUnit tests
+(81/81) pass unmodified on CPython 3.12, 3.13, 3.14, 3.13t and 3.14t, with
+one build, JDK 25, macOS arm64 (`ffm/sweep.sh`). Linux and Windows are
+session 9. This note was approved on 2026-10-01; sections 11-15 were added
+since.
 
 ## 1. Object model: the C jpy's classes, plus a real metaclass
 
@@ -404,6 +404,7 @@ ffm/matrix.sh jpy_gettype_test.py    # same on 3.12, 3.13, 3.14, 3.13t, 3.14t
 <numpy-python> ffm/suite.py          # jpy's 22 test files, then the FFM extras in ffm/tests
 ffm/junit.sh                         # jpy's JUnit tests (Java-first), as jpy's CI runs them
 ffm/matrix.sh junit                  # same on all five interpreters
+ffm/sweep.sh                         # everything above on all five interpreters, each in a venv with numpy
 ```
 
 `ffm/tests/` holds unittest files for behavior only the FFM jpy has (the C
@@ -411,5 +412,6 @@ jpy fails them by design, so they stay out of `src/test/python` while both
 implementations exist): `ffm_bridge_test.py` (identity, calls, overloads,
 fields, arrays, errors), `ffm_static_fields_test.py` (§11),
 `ffm_buffer_test.py` (§12; all but the late-access test also pass on the C
-jpy), `ffm_exceptions_test.py` (§14) and `ffm_introspection_test.py`
-(§15).
+jpy), `ffm_exceptions_test.py` (§14), `ffm_introspection_test.py` (§15)
+and `ffm_threads_test.py` (16 threads at once creating Java types, calling,
+converting and calling back into Python; aimed at 3.13t and 3.14t).
