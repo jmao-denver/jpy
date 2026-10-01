@@ -118,7 +118,16 @@ Speedups are a bonus concentrated in the scalar-UDF path.
 
 | session | result |
 |---|---|
-| 1. Type system | **done 2026-09-30**: `jpy_gettype_test.py` 8/8 on 3.12, 3.13, 3.14, 3.13t, 3.14t; design note `ffm/DESIGN.md` awaiting review |
+| 1. Type system | **done 2026-09-30**: `jpy_gettype_test.py` 8/8 on 3.12, 3.13, 3.14, 3.13t, 3.14t; design note `ffm/DESIGN.md` approved 2026-10-01 |
+| 2. Objects, methods, fields | **done 2026-10-01**: `jpy_obj_test.py` 2/2, `jpy_field_test.py` 3/3 (already green after session 1) |
+| 3. Overload resolution | **done 2026-10-01**: `jpy_overload_test.py` 18/18, `jpy_typeres_test.py` 3/3; added `jpy.cast`, `jpy.array` |
+| 4. Conversions wired into calls | **done 2026-10-01**: `jpy_typeconv_test.py` 11/11, `jpy_retval_test.py` 12/12, `jpy_modretparam_test.py` 7/7; added `jpy.convert`, `jpy.type_callbacks`, `jpy.JMethod`, Python buffers as primitive-array arguments with write-back, return-parameter identity. All green on 3.12, 3.13, 3.14, 3.13t, 3.14t |
+
+Full suite after session 4 (2026-10-01): **99/154 pass, 0 failures**, 55
+errors, 0 crashes; 12 of 22 files fully green. FFM extras 27/27. The
+remaining errors: the buffer protocol on Java arrays (9, session 5) and the
+Java-to-Python half, `org.jpy.PyLib`/`PyObject` (most of the rest, session
+6), plus `jpy.diag` and `VerboseExceptions` (session 7).
 
 Full-suite baseline after session 1 (2026-10-01, CPython 3.12 + numpy,
 `ffm/suite.py`): all 22 Python test files from setup.py, 154 tests: **70

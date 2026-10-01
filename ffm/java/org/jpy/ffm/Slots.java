@@ -62,9 +62,48 @@ final class Slots {
     static final MemorySegment META_GETATTRO = stub("metaGetattro", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
     static final MemorySegment META_SETATTRO = stub("metaSetattro", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
 
+    // ---- stubs for jpy.JMethod and the attributes of jpy.JOverloadedMethod ----
+
+    private static final FunctionDescriptor GETTER = FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS);
+    private static final FunctionDescriptor VARARGS = FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS);
+    static final MemorySegment JM_REPR = stub("jmRepr", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    static final MemorySegment JM_STR = stub("jmStr", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    static final MemorySegment JM_GET = stub("jmGet", GETTER);
+    static final MemorySegment OM_GET = stub("omGet", GETTER);
+
     static MemorySegment metaType;
     static MemorySegment overloadedMethodType;
     static MemorySegment fieldType;
+    static MemorySegment methodType;
+
+    /** PyGetSetDef[] { name, get, set, doc, closure } + sentinel; closure carries an attribute id. */
+    private static MemorySegment getsets(MemorySegment getter, String... names) {
+        Arena forever = Arena.global();
+        MemorySegment defs = forever.allocate(40L * (names.length + 1), 8);
+        for (int i = 0; i < names.length; i++) {
+            long off = 40L * i;
+            defs.set(ADDRESS, off, forever.allocateFrom(names[i]));
+            defs.set(ADDRESS, off + 8, getter);
+            defs.set(ADDRESS, off + 16, NULL);
+            defs.set(ADDRESS, off + 24, NULL);
+            defs.set(ADDRESS, off + 32, MemorySegment.ofAddress(i));
+        }
+        return defs;
+    }
+
+    /** PyMethodDef[] { name, meth, flags, doc } + sentinel, all METH_VARARGS. */
+    private static MemorySegment methodDefs(String[] names, String[] javaMethods, String[] docs) {
+        Arena forever = Arena.global();
+        MemorySegment defs = forever.allocate(32L * (names.length + 1), 8);
+        for (int i = 0; i < names.length; i++) {
+            long off = 32L * i;
+            defs.set(ADDRESS, off, forever.allocateFrom(names[i]));
+            defs.set(ADDRESS, off + 8, stub(javaMethods[i], VARARGS));
+            defs.set(JAVA_INT, off + 16, CPython.METH_VARARGS);
+            defs.set(ADDRESS, off + 24, forever.allocateFrom(docs[i]));
+        }
+        return defs;
+    }
 
     /** Creates jpy.JTypeMeta, jpy.JType, jpy.JOverloadedMethod and jpy.JField and adds them to the module. */
     static void createModuleTypes(MemorySegment module) {
@@ -79,7 +118,25 @@ final class Slots {
                 new long[]{CPython.Py_tp_call, OM_CALL.address()},
                 new long[]{CPython.Py_tp_repr, OM_REPR.address()},
                 new long[]{CPython.Py_tp_str, OM_STR.address()},
-                new long[]{CPython.Py_tp_dealloc, OM_DEALLOC.address()}), null);
+                new long[]{CPython.Py_tp_dealloc, OM_DEALLOC.address()},
+                new long[]{CPython.Py_tp_getset, getsets(OM_GET, "decl_class", "name", "methods").address()}), null);
+        methodType = JTypes.fromSpec("jpy.JMethod", noNew, List.of(
+                new long[]{CPython.Py_tp_repr, JM_REPR.address()},
+                new long[]{CPython.Py_tp_str, JM_STR.address()},
+                new long[]{CPython.Py_tp_getset, getsets(JM_GET, "name", "param_count", "is_static").address()},
+                new long[]{CPython.Py_tp_methods, methodDefs(
+                        new String[]{"get_param_type", "is_param_mutable", "is_param_output", "is_param_return",
+                                "set_param_mutable", "set_param_output", "set_param_return"},
+                        new String[]{"jmGetParamType", "jmIsParamMutable", "jmIsParamOutput", "jmIsParamReturn",
+                                "jmSetParamMutable", "jmSetParamOutput", "jmSetParamReturn"},
+                        new String[]{"Gets the type of the parameter given by index",
+                                "Tests if the method parameter given by index is mutable",
+                                "Tests if the method parameter given by index is a mere output value (and not read from)",
+                                "Tests if the method parameter given by index is the return value",
+                                "Sets whether the method parameter given by index is mutable",
+                                "Sets whether the method parameter given by index is a mere output value (and not read from)",
+                                "Sets whether the method parameter given by index is the return value"}).address()}), null);
+        CPython.setAttr(module, "JMethod", methodType);
         fieldType = JTypes.fromSpec("jpy.JField", noNew, List.of(
                 new long[]{CPython.Py_tp_repr, FIELD_REPR.address()},
                 new long[]{CPython.Py_tp_dealloc, FIELD_DEALLOC.address()}), null);
@@ -458,6 +515,184 @@ final class Slots {
             CPython.freeHeapInstance(self);
         } catch (Throwable t) {
             t.printStackTrace();
+        }
+    }
+
+    /** jpy.JOverloadedMethod.decl_class / .name / .methods. */
+    static MemorySegment omGet(MemorySegment self, MemorySegment closure) {
+        try {
+            OverloadSet os = OverloadSet.BY_PYOBJ.get(self.address());
+            if (os == null) {
+                throw CPython.runtimeError("internal error: unknown jpy.JOverloadedMethod");
+            }
+            switch ((int) closure.address()) {
+                case 0 -> {
+                    CPython.incRef(os.declaringType.pyType);
+                    return os.declaringType.pyType;
+                }
+                case 1 -> {
+                    return CPython.newStr(os.name);
+                }
+                default -> {
+                    MemorySegment[] items = new MemorySegment[os.methods.size()];
+                    for (int i = 0; i < items.length; i++) {
+                        items[i] = os.methods.get(i).pyObj();
+                        CPython.incRef(items[i]);
+                    }
+                    return CPython.newList(items);
+                }
+            }
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // jpy.JMethod: JMethod_repr/str, members and the param_* methods
+    // ------------------------------------------------------------------
+
+    private static OverloadSet.JMethod jmethod(MemorySegment self) {
+        OverloadSet.JMethod m = OverloadSet.JMethod.BY_PYOBJ.get(self.address());
+        if (m == null) {
+            throw CPython.runtimeError("internal error: unknown jpy.JMethod");
+        }
+        return m;
+    }
+
+    static MemorySegment jmRepr(MemorySegment self) {
+        try {
+            return CPython.newStr(jmethod(self).repr());
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    static MemorySegment jmStr(MemorySegment self) {
+        try {
+            return CPython.newStr(jmethod(self).name);
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    /** JMethod_members: name, param_count, is_static. */
+    static MemorySegment jmGet(MemorySegment self, MemorySegment closure) {
+        try {
+            OverloadSet.JMethod m = jmethod(self);
+            return switch ((int) closure.address()) {
+                case 0 -> CPython.newStr(m.name);
+                case 1 -> CPython.newLong(m.paramCount);
+                default -> CPython.newBool(m.isStatic);
+            };
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    /** "i:<fn>" (and "ip:<fn>" when withValue): the index, range-checked as JMethod_CHECK_PARAMETER_INDEX does. */
+    private static int paramIndex(OverloadSet.JMethod m, MemorySegment args, String fn, boolean withValue) {
+        long n = CPython.tupleSize(args);
+        int want = withValue ? 2 : 1;
+        if (n != want) {
+            throw CPython.typeError(fn + "() takes exactly " + want + " argument" + (want > 1 ? "s" : "") + " (" + n + " given)");
+        }
+        MemorySegment idx = CPython.tupleGet(args, 0);
+        if (!CPython.isLong(idx)) {
+            throw CPython.typeError("'" + CPython.typeName(idx) + "' object cannot be interpreted as an integer");
+        }
+        long index = CPython.asLong(idx);
+        if (index < 0 || index >= m.paramCount) {
+            throw new CPython.PyRaise(CPython.PyExc_IndexError, "invalid parameter index");
+        }
+        return (int) index;
+    }
+
+    private static boolean paramValue(MemorySegment args) {
+        return CPython.isTrue(CPython.tupleGet(args, 1));
+    }
+
+    static MemorySegment jmGetParamType(MemorySegment self, MemorySegment args) {
+        try {
+            OverloadSet.JMethod m = jmethod(self);
+            JavaType t = JTypes.getType(m.paramTypes[paramIndex(m, args, "get_param_type", false)], false);
+            CPython.incRef(t.pyType);
+            return t.pyType;
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    static MemorySegment jmIsParamMutable(MemorySegment self, MemorySegment args) {
+        try {
+            OverloadSet.JMethod m = jmethod(self);
+            return CPython.newBool(m.isMutable[paramIndex(m, args, "is_param_mutable", false)]);
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    static MemorySegment jmIsParamOutput(MemorySegment self, MemorySegment args) {
+        try {
+            OverloadSet.JMethod m = jmethod(self);
+            return CPython.newBool(m.isOutput[paramIndex(m, args, "is_param_output", false)]);
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    static MemorySegment jmIsParamReturn(MemorySegment self, MemorySegment args) {
+        try {
+            OverloadSet.JMethod m = jmethod(self);
+            return CPython.newBool(m.isReturn[paramIndex(m, args, "is_param_return", false)]);
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    static MemorySegment jmSetParamMutable(MemorySegment self, MemorySegment args) {
+        try {
+            OverloadSet.JMethod m = jmethod(self);
+            m.isMutable[paramIndex(m, args, "set_param_mutable", true)] = paramValue(args);
+            return CPython.none();
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    static MemorySegment jmSetParamOutput(MemorySegment self, MemorySegment args) {
+        try {
+            OverloadSet.JMethod m = jmethod(self);
+            m.isOutput[paramIndex(m, args, "set_param_output", true)] = paramValue(args);
+            return CPython.none();
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    /** JMethod_set_param_return: setting True also makes it the return parameter; False leaves that index. */
+    static MemorySegment jmSetParamReturn(MemorySegment self, MemorySegment args) {
+        try {
+            OverloadSet.JMethod m = jmethod(self);
+            int index = paramIndex(m, args, "set_param_return", true);
+            boolean value = paramValue(args);
+            m.isReturn[index] = value;
+            if (value) {
+                m.returnParamIndex = index;
+            }
+            return CPython.none();
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
         }
     }
 

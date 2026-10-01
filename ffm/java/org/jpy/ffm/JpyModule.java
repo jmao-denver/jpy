@@ -34,6 +34,7 @@ final class JpyModule {
     }
 
     private static final FunctionDescriptor PY_CFUNCTION_WITH_KEYWORDS = FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, ADDRESS);
+    private static final FunctionDescriptor PY_CFUNCTION = FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS);
 
     /** Called once with the GIL held, from Bootstrap.install. */
     static void install(MemorySegment jpyModule) {
@@ -46,9 +47,27 @@ final class JpyModule {
         String[][] defs = {
                 {"get_type", "get_type(name, resolve=True) - Return the Java class with the given name, e.g. 'java.io.File'. "
                         + "Loads the Java class from the JVM if not already done. Optionally avoids resolving the class' methods."},
+                {"cast", "cast(obj, type) - Cast the given Java object to the given Java type (type name or type object). "
+                        + "Returns None if the cast is not possible."},
+                {"convert", "convert(obj, type) - Convert the given Python object to the given Java type (type name or type object). "
+                        + "Returns None if the conversion is not possible. If the Java type is a primitive, the returned object "
+                        + "will be of the corresponding boxed type."},
+                {"array", "array(name, init) - Return a new Java array of given Java type (type name or type object) and initializer "
+                        + "(array length or sequence). Possible primitive types are 'boolean', 'byte', 'char', 'short', 'int', "
+                        + "'long', 'float', and 'double'."},
         };
-        MemorySegment[] impls = {stub("getType", PY_CFUNCTION_WITH_KEYWORDS)};
-        int[] flags = {CPython.METH_VARARGS | CPython.METH_KEYWORDS};
+        MemorySegment[] impls = {
+                stub("getType", PY_CFUNCTION_WITH_KEYWORDS),
+                stub("cast", PY_CFUNCTION),
+                stub("convert", PY_CFUNCTION),
+                stub("array", PY_CFUNCTION),
+        };
+        int[] flags = {
+                CPython.METH_VARARGS | CPython.METH_KEYWORDS,
+                CPython.METH_VARARGS,
+                CPython.METH_VARARGS,
+                CPython.METH_VARARGS,
+        };
 
         Arena forever = Arena.global();
         MemorySegment table = forever.allocate(32L * (defs.length + 1), 8);
@@ -121,6 +140,96 @@ final class JpyModule {
             JavaType jt = JTypes.getTypeForName(CPython.toJavaString(nameObj), resolve);
             CPython.incRef(jt.pyType);
             return jt.pyType;
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    /** PyArg_ParseTuple(args, "OO:<fn>"): exactly two positional arguments, borrowed. */
+    private static MemorySegment[] twoArgs(MemorySegment args, String fn) {
+        long n = CPython.tupleSize(args);
+        if (n != 2) {
+            throw CPython.typeError(fn + "() takes exactly 2 arguments (" + n + " given)");
+        }
+        return new MemorySegment[]{CPython.tupleGet(args, 0), CPython.tupleGet(args, 1)};
+    }
+
+    /** A type argument given as a Java type name or a Java type object (not resolved). */
+    private static JavaType typeArg(MemorySegment arg, String errorMessage) {
+        if (CPython.isStr(arg)) {
+            return JTypes.getTypeForName(CPython.toJavaString(arg), false);
+        }
+        JavaType jt = JTypes.byPyType(arg.address());
+        if (jt == null) {
+            throw CPython.valueError(errorMessage);
+        }
+        return jt;
+    }
+
+    /** JObj_New: wrap with the object's runtime type, resolved. */
+    private static MemorySegment wrapRuntime(Object o) {
+        return JObjects.wrap(o, JTypes.getType(o.getClass(), true));
+    }
+
+    /** jpy.cast(obj, type): JPy_cast_internal. */
+    static MemorySegment cast(MemorySegment self, MemorySegment args) {
+        try {
+            MemorySegment[] a = twoArgs(args, "cast");
+            if (a[0].equals(CPython.Py_None)) {
+                return CPython.none();
+            }
+            Object o = JObjects.get(a[0]);
+            if (o == null) {
+                throw CPython.valueError("cast: argument 1 (obj) must be a Java object");
+            }
+            JavaType target = typeArg(a[1], "cast: argument 2 (obj_type) must be a Java type name or Java type object");
+            return target.clazz.isInstance(o) ? JObjects.wrap(o, target) : CPython.none();
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    /** jpy.convert(obj, type): JPy_convert_internal. */
+    static MemorySegment convert(MemorySegment self, MemorySegment args) {
+        try {
+            MemorySegment[] a = twoArgs(args, "convert");
+            if (a[0].equals(CPython.Py_None)) {
+                return CPython.none();
+            }
+            JavaType target = typeArg(a[1], "cast: argument 2 (obj_type) must be a Java type name or Java type object");
+            Object o = JObjects.get(a[0]);
+            if (o != null && target.clazz.isInstance(o)) {
+                return JObjects.wrap(o, target);
+            }
+            return JObjects.wrap(Convert.toJavaObject(a[0], target.clazz, false), target);
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    /** jpy.array(type, init): JPy_array_internal. */
+    static MemorySegment array(MemorySegment self, MemorySegment args) {
+        try {
+            MemorySegment[] a = twoArgs(args, "array");
+            JavaType component = typeArg(a[0], "array: argument 1 (type) must be a type name or Java type object");
+            if (component.clazz == void.class) {
+                throw CPython.valueError("array: argument 1 (type) must not be 'void'");
+            }
+            String initError = "array: argument 2 (init) must be either an integer array length or any sequence";
+            if (CPython.isLong(a[1])) {
+                int length = (int) CPython.asLongUnchecked(a[1]);
+                if (length < 0) {
+                    throw CPython.valueError(initError);
+                }
+                return wrapRuntime(java.lang.reflect.Array.newInstance(component.clazz, length));
+            }
+            if (CPython.isSequence(a[1])) {
+                return wrapRuntime(Convert.toJavaArray(a[1], component.clazz, false));
+            }
+            throw CPython.valueError(initError);
         } catch (Throwable t) {
             CPython.setPythonError(t);
             return NULL;

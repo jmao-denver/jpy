@@ -153,11 +153,17 @@ uses a `PyMutex` on free-threaded builds and relies on the GIL otherwise.
 
 ## 9. Open items owned by later sessions
 
-- `type_callbacks` and `jpy.JMethod` objects (sessions 3 and 4)
-- `cast`, `convert`, `array`, `byte_buffer`, `diag`, `VerboseExceptions`
-- buffer protocol, primitive-array parameters from Python buffers, and
-  heap-array pinning through FFM calls into JNI's function table, with no
-  compiled shim (session 5; proven in `ffm-prototype/src/ffm/M10.java`)
+Done in sessions 2-4: `type_callbacks`, `jpy.JMethod` (with the
+`set_param_*` annotations), `cast`, `convert`, `array`, Python buffers as
+primitive-array arguments (copied in, copied back when mutable), and
+return-parameter identity.
+
+Still open:
+- `byte_buffer`, `diag`, `VerboseExceptions`
+- the buffer protocol on Java primitive arrays (`memoryview(java_array)`,
+  `np.frombuffer`), with heap-array pinning through FFM calls into JNI's
+  function table and no compiled shim (session 5; proven in
+  `ffm-prototype/src/ffm/M10.java`)
 - Java-to-Python direction: `org.jpy.PyLib`, `PyObject`, `PyModule`,
   `PyObject` arguments and return values (session 6)
 - proxies, verbose exceptions and cause chains (session 7)

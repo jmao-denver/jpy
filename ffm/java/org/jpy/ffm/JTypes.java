@@ -296,11 +296,15 @@ public final class JTypes {
                 continue;
             }
             Constructor<?> usable = Access.usable(c);
+            createParamTypes(c.getParameterTypes());
+            OverloadSet.JMethod jm = new OverloadSet.JMethod(usable, jt);
+            if (!acceptMethod(jt, jm)) {
+                continue;
+            }
             if (ctors == null) {
                 ctors = new OverloadSet(jt, OverloadSet.JINIT);
             }
-            ctors.add(new OverloadSet.JMethod(usable));
-            createParamTypes(c.getParameterTypes());
+            ctors.add(jm);
         }
         if (ctors != null) {
             publishOverloads(jt, ctors);
@@ -317,12 +321,40 @@ public final class JTypes {
             }
             createParamTypes(m.getParameterTypes());
             getType(m.getReturnType(), false);
-            // TODO(session 3/4): jpy.type_callbacks may reject a method (JType_AcceptMethod)
-            own.computeIfAbsent(m.getName(), n -> new OverloadSet(jt, n))
-                    .add(new OverloadSet.JMethod(Access.usable(m)));
+            OverloadSet.JMethod jm = new OverloadSet.JMethod(Access.usable(m), jt);
+            if (acceptMethod(jt, jm)) {
+                own.computeIfAbsent(m.getName(), n -> new OverloadSet(jt, n)).add(jm);
+            }
         }
         for (OverloadSet os : own.values()) {
             publishOverloads(jt, os);
+        }
+    }
+
+    /**
+     * JType_AcceptMethod: jpy.type_callbacks[type name](type, method) may annotate the method's
+     * parameters, or reject it by returning None or False. A callback that raises is ignored, as in
+     * the C jpy, but its error is cleared instead of being left pending.
+     */
+    private static boolean acceptMethod(JavaType jt, OverloadSet.JMethod jm) {
+        MemorySegment callback = CPython.dictGet(JpyModule.typeCallbacks, jt.name);
+        if (callback.equals(CPython.NULL) || !CPython.isCallable(callback)) {
+            return true;
+        }
+        MemorySegment method = jm.pyObj();
+        CPython.incRef(jt.pyType);
+        CPython.incRef(method);
+        MemorySegment args = CPython.newTuple(jt.pyType, method);
+        try {
+            MemorySegment result = CPython.call(callback, args, CPython.NULL);
+            boolean reject = result.equals(CPython.Py_None) || result.equals(CPython.Py_False);
+            CPython.decRef(result);
+            return !reject;
+        } catch (CPython.PyErrAlreadySet e) {
+            CPython.errClear();
+            return true;
+        } finally {
+            CPython.decRef(args);
         }
     }
 

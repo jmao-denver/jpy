@@ -26,9 +26,16 @@ final class OverloadSet {
 
     static final String JINIT = "__jinit__";
 
-    /** One Java method or constructor, the C JPy_JMethod. */
+    /** One Java method or constructor, the C JPy_JMethod (Python type jpy.JMethod). */
     static final class JMethod {
+        /** Python jpy.JMethod objects, keyed by address. */
+        static final ConcurrentHashMap<Long, JMethod> BY_PYOBJ = new ConcurrentHashMap<>();
+
         final Executable executable;
+        /** The Python-facing name: the method name, or "__jinit__" for constructors. */
+        final String name;
+        /** The type whose dict holds this method (the C declaringClass). */
+        final JavaType declaringType;
         final Class<?>[] paramTypes;
         /** void.class for constructors, as the C code never converts their return value. */
         final Class<?> returnType;
@@ -37,13 +44,42 @@ final class OverloadSet {
         final boolean isVarArgs;
         final int paramCount;
 
-        JMethod(Executable e) {
+        // Per-parameter flags set from Python through jpy.type_callbacks (JPy_ParamDescriptor).
+        final boolean[] isMutable;
+        final boolean[] isOutput;
+        final boolean[] isReturn;
+        /** JPy_ReturnDescriptor.paramIndex: the parameter returned as the result, or -1. */
+        volatile int returnParamIndex = -1;
+
+        MemorySegment pyObj;
+
+        JMethod(Executable e, JavaType declaringType) {
             this.executable = e;
+            this.declaringType = declaringType;
+            this.name = e instanceof Constructor ? JINIT : e.getName();
             this.paramTypes = e.getParameterTypes();
             this.returnType = e instanceof Method m ? m.getReturnType() : void.class;
             this.isStatic = e instanceof Constructor || Modifier.isStatic(e.getModifiers());
             this.isVarArgs = e.isVarArgs();
             this.paramCount = paramTypes.length;
+            this.isMutable = new boolean[paramCount];
+            this.isOutput = new boolean[paramCount];
+            this.isReturn = new boolean[paramCount];
+        }
+
+        /** The Python jpy.JMethod object, created on first use (borrowed; Java keeps it alive). */
+        MemorySegment pyObj() {
+            if (pyObj == null) {
+                MemorySegment py = CPython.allocInstance(Slots.methodType);
+                BY_PYOBJ.put(py.address(), this);
+                pyObj = py;
+            }
+            return pyObj;
+        }
+
+        String repr() {
+            return "jpy.JMethod(name='" + name + "', param_count=" + paramCount
+                    + ", is_static=" + (isStatic ? 1 : 0) + ", mid=0x" + Integer.toHexString(System.identityHashCode(executable)) + ")";
         }
     }
 
@@ -258,8 +294,11 @@ final class OverloadSet {
         }
 
         if (paramComponent != null) {
-            // TODO(session 5): primitive-array parameters matched against Python buffer objects
-            if (CPython.isSequence(pyArg)) {
+            if (paramComponent.isPrimitive() && CPython.checkBuffer(pyArg)) {
+                try (CPython.Buffer view = CPython.Buffer.get(pyArg, CPython.PyBUF_FORMAT)) {
+                    return view == null ? 0 : bufferMatch(paramComponent, view.format(), view.itemsize());
+                }
+            } else if (CPython.isSequence(pyArg)) {
                 if (String.class.isAssignableFrom(paramComponent)) {
                     long len = CPython.sequenceSize(pyArg);
                     for (long k = 0; k < len; k++) {
@@ -296,6 +335,30 @@ final class OverloadSet {
                 if (paramType.isAssignableFrom(Double.class) || paramType.isAssignableFrom(Float.class)) return 80;
             }
         }
+        return 0;
+    }
+
+    /** JType_MatchPyArgAsJObject's buffer table: format character first, item size as a fallback. */
+    static int bufferMatch(Class<?> c, char format, long itemsize) {
+        if (format != 0) {
+            if (c == boolean.class) return format == 'b' || format == 'B' ? 100 : itemsize == 1 ? 10 : 0;
+            if (c == byte.class) return format == 'b' ? 100 : format == 'B' ? 90 : itemsize == 1 ? 10 : 0;
+            if (c == char.class) return format == 'u' ? 100 : format == 'H' ? 90 : format == 'h' ? 80 : itemsize == 2 ? 10 : 0;
+            if (c == short.class) return format == 'h' ? 100 : format == 'H' ? 90 : itemsize == 2 ? 10 : 0;
+            if (c == int.class) return format == 'i' ? 100 : format == 'I' ? 90 : itemsize == 4 ? 10 : 0;
+            if (c == long.class) return format == 'q' || format == 'l' ? 100 : format == 'Q' || format == 'L' ? 90 : itemsize == 8 ? 10 : 0;
+            if (c == float.class) return format == 'f' ? 100 : itemsize == 4 ? 10 : 0;
+            if (c == double.class) return format == 'd' ? 100 : itemsize == 8 ? 10 : 0;
+            return 0;
+        }
+        return itemsize == primitiveSize(c) ? 10 : 0;
+    }
+
+    static int primitiveSize(Class<?> c) {
+        if (c == boolean.class || c == byte.class) return 1;
+        if (c == char.class || c == short.class) return 2;
+        if (c == int.class || c == float.class) return 4;
+        if (c == long.class || c == double.class) return 8;
         return 0;
     }
 
@@ -340,8 +403,11 @@ final class OverloadSet {
     // Invocation
     // ------------------------------------------------------------------
 
-    /** JMethod_CreateJArgs. */
-    static Object[] javaArgs(JMethod m, MemorySegment args, boolean isVarArgsArray) {
+    /**
+     * JMethod_CreateJArgs. Work to do after the call (copying buffers back, releasing them) is
+     * added to 'after', the C jpy's JPy_ArgDisposer list.
+     */
+    static Object[] javaArgs(JMethod m, MemorySegment args, boolean isVarArgsArray, List<Runnable> after) {
         Object[] jargs = new Object[m.paramCount];
         if (m.paramCount == 0) {
             return jargs;
@@ -362,17 +428,67 @@ final class OverloadSet {
         int p = 0;
         int i;
         for (i = i0; i < iLast; i++) {
-            jargs[p] = Convert.toJavaArg(CPython.tupleGet(args, i), m.paramTypes[p]);
+            jargs[p] = javaArg(m, p, CPython.tupleGet(args, i), after);
             p++;
         }
         if (m.isVarArgs) {
             if (isVarArgsArray) {
-                jargs[p] = Convert.toJavaArg(CPython.tupleGet(args, i), m.paramTypes[p]);
+                jargs[p] = javaArg(m, p, CPython.tupleGet(args, i), after);
             } else {
                 jargs[p] = varArgsArray(m.paramTypes[p].getComponentType(), args, i, argCount);
             }
         }
         return jargs;
+    }
+
+    /**
+     * One argument. A Python buffer passed for a primitive-array parameter takes the
+     * JType_ConvertPyArgToJObjectArg buffer branch: a new Java array filled from the buffer (unless
+     * the parameter is output-only), copied back afterwards if the parameter is mutable.
+     */
+    private static Object javaArg(JMethod m, int p, MemorySegment pyArg, List<Runnable> after) {
+        Class<?> paramType = m.paramTypes[p];
+        Class<?> component = paramType.getComponentType();
+        if (component != null && component.isPrimitive() && !pyArg.equals(CPython.Py_None)
+                && JObjects.get(pyArg) == null && CPython.checkBuffer(pyArg)) {
+            return bufferArg(pyArg, component, m.isMutable[p], m.isOutput[p], after);
+        }
+        return Convert.toJavaArg(pyArg, paramType);
+    }
+
+    private static Object bufferArg(MemorySegment pyArg, Class<?> component, boolean mutable, boolean output,
+                                    List<Runnable> after) {
+        CPython.Buffer buf = CPython.Buffer.getOrRaise(pyArg, mutable ? CPython.PyBUF_WRITABLE : CPython.PyBUF_SIMPLE);
+        long itemCount = buf.len() / buf.itemsize();
+        int javaItemSize = primitiveSize(component);
+        if (buf.len() != itemCount * javaItemSize) {
+            long len = buf.len();
+            long itemsize = buf.itemsize();
+            buf.close();
+            throw CPython.valueError("illegal buffer argument: expected size was " + itemCount * javaItemSize
+                    + " bytes, but got " + len + " (expected item size was " + javaItemSize
+                    + " bytes, got " + itemsize + ")");
+        }
+        Object array = Array.newInstance(component, (int) itemCount);
+        if (!output) {
+            Buffers.copyIn(buf.data(), array, component, (int) itemCount);
+        }
+        after.add(() -> {
+            try {
+                if (mutable) {
+                    Buffers.copyOut(array, buf.data(), component, (int) itemCount);
+                }
+            } finally {
+                buf.close();
+            }
+        });
+        return array;
+    }
+
+    private static void runAfter(List<Runnable> after) {
+        for (Runnable r : after) {
+            r.run();
+        }
     }
 
     /**
@@ -397,32 +513,62 @@ final class OverloadSet {
         return invoke(f.method, args, f.isVarArgsArray);
     }
 
+    /** JMethod_InvokeMethod. Arguments are disposed after the return value is converted, as in C. */
     static MemorySegment invoke(JMethod m, MemorySegment args, boolean isVarArgsArray) {
-        Object[] jargs = javaArgs(m, args, isVarArgsArray);
-        Object target = null;
-        if (!m.isStatic) {
-            target = JObjects.get(CPython.tupleGet(args, 0));
+        List<Runnable> after = new ArrayList<>();
+        try {
+            Object[] jargs = javaArgs(m, args, isVarArgsArray, after);
+            Object target = null;
+            if (!m.isStatic) {
+                target = JObjects.get(CPython.tupleGet(args, 0));
+            }
+            Object result;
+            try (Gil.Released r = Gil.release()) {
+                result = ((Method) m.executable).invoke(target, jargs);
+            } catch (InvocationTargetException e) {
+                throw JavaErrors.toPython(e.getCause());
+            } catch (IllegalAccessException | IllegalArgumentException e) {
+                throw JavaErrors.toPython(e);
+            }
+            MemorySegment sameAsArg = returnParameter(m, args, jargs, result);
+            return sameAsArg != null ? sameAsArg : Convert.toPython(result, m.returnType);
+        } finally {
+            runAfter(after);
         }
-        Object result;
-        try (Gil.Released r = Gil.release()) {
-            result = ((Method) m.executable).invoke(target, jargs);
-        } catch (InvocationTargetException e) {
-            throw JavaErrors.toPython(e.getCause());
-        } catch (IllegalAccessException | IllegalArgumentException e) {
-            throw JavaErrors.toPython(e);
+    }
+
+    /**
+     * JMethod_FromJObject: if a parameter is marked as the return value and the method returned
+     * that very Java object, return the caller's Python argument itself (new reference).
+     */
+    private static MemorySegment returnParameter(JMethod m, MemorySegment args, Object[] jargs, Object result) {
+        int index = m.returnParamIndex;
+        Class<?> rt = m.returnType;
+        if (index < 0 || rt.isPrimitive() || rt == String.class || result == null || result != jargs[index]) {
+            return null;
         }
-        return Convert.toPython(result, m.returnType);
+        MemorySegment pyArg = CPython.tupleGet(args, index + (m.isStatic ? 0 : 1));
+        if (JObjects.get(pyArg) != null || CPython.checkBuffer(pyArg)) {
+            CPython.incRef(pyArg);
+            return pyArg;
+        }
+        return null;
     }
 
     /** Runs a constructor; the caller stores the new object. */
     static Object construct(JMethod m, MemorySegment args, boolean isVarArgsArray) {
-        Object[] jargs = javaArgs(m, args, isVarArgsArray);
-        try (Gil.Released r = Gil.release()) {
-            return ((Constructor<?>) m.executable).newInstance(jargs);
-        } catch (InvocationTargetException e) {
-            throw JavaErrors.toPython(e.getCause());
-        } catch (ReflectiveOperationException | IllegalArgumentException e) {
-            throw JavaErrors.toPython(e);
+        List<Runnable> after = new ArrayList<>();
+        try {
+            Object[] jargs = javaArgs(m, args, isVarArgsArray, after);
+            try (Gil.Released r = Gil.release()) {
+                return ((Constructor<?>) m.executable).newInstance(jargs);
+            } catch (InvocationTargetException e) {
+                throw JavaErrors.toPython(e.getCause());
+            } catch (ReflectiveOperationException | IllegalArgumentException e) {
+                throw JavaErrors.toPython(e);
+            }
+        } finally {
+            runAfter(after);
         }
     }
 

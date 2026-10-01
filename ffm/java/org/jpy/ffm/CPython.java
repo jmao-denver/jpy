@@ -64,6 +64,8 @@ public final class CPython {
     public static final int Py_tp_str = 70;
     public static final int Py_tp_free = 74;
     public static final int Py_tp_members = 72;
+    public static final int Py_tp_methods = 64;
+    public static final int Py_tp_getset = 73;
 
     public static final long Py_TPFLAGS_DISALLOW_INSTANTIATION = 1L << 7;
     public static final long Py_TPFLAGS_BASETYPE = 1L << 10;
@@ -161,6 +163,12 @@ public final class CPython {
     static final MethodHandle PySequence_GetItem = dc("PySequence_GetItem", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
 
     static final MethodHandle PyCallable_Check = dc("PyCallable_Check", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+    static final MethodHandle PyObject_CheckBuffer = dc("PyObject_CheckBuffer", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    static final MethodHandle PyObject_GetBuffer = dc("PyObject_GetBuffer", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
+    static final MethodHandle PyBuffer_Release = dc("PyBuffer_Release", FunctionDescriptor.ofVoid(ADDRESS));
+    static final MethodHandle PyList_New = dc("PyList_New", FunctionDescriptor.of(ADDRESS, JAVA_LONG));
+    static final MethodHandle PyList_SetItem = dc("PyList_SetItem", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG, ADDRESS));
 
     static final MethodHandle PyErr_SetString = dc("PyErr_SetString", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
     static final MethodHandle PyErr_Occurred = dc("PyErr_Occurred", FunctionDescriptor.of(ADDRESS));
@@ -666,6 +674,114 @@ public final class CPython {
                 if (rc != 0) throw PyErrAlreadySet.INSTANCE;
             }
             return t;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    // ---- buffer protocol (consumer side) ----
+
+    public static final int PyBUF_SIMPLE = 0;
+    public static final int PyBUF_WRITABLE = 0x0001;
+    public static final int PyBUF_FORMAT = 0x0004;
+
+    /**
+     * A Py_buffer obtained with PyObject_GetBuffer. Py_buffer is part of the stable ABI
+     * since 3.11: { void* buf; PyObject* obj; Py_ssize_t len; Py_ssize_t itemsize; int readonly;
+     * int ndim; char* format; Py_ssize_t* shape; Py_ssize_t* strides; Py_ssize_t* suboffsets;
+     * void* internal } = 80 bytes on 64-bit platforms.
+     */
+    public static final class Buffer implements AutoCloseable {
+        static final long SIZE = 80;
+        private final Arena arena = Arena.ofConfined();
+        final MemorySegment view = arena.allocate(SIZE, 8);
+        private boolean held;
+
+        /** Returns null (with no error left set) if the object refuses the request. */
+        static Buffer get(MemorySegment obj, int flags) {
+            Buffer b = new Buffer();
+            try {
+                if ((int) PyObject_GetBuffer.invokeExact(obj, b.view, flags) != 0) {
+                    errClear();
+                    b.arena.close();
+                    return null;
+                }
+            } catch (Throwable t) {
+                b.arena.close();
+                throw rethrow(t);
+            }
+            b.held = true;
+            return b;
+        }
+
+        /** Like get, but a refused request raises the Python error PyObject_GetBuffer set. */
+        static Buffer getOrRaise(MemorySegment obj, int flags) {
+            Buffer b = new Buffer();
+            try {
+                if ((int) PyObject_GetBuffer.invokeExact(obj, b.view, flags) != 0) {
+                    b.arena.close();
+                    throw PyErrAlreadySet.INSTANCE;
+                }
+            } catch (PyErrAlreadySet e) {
+                throw e;
+            } catch (Throwable t) {
+                b.arena.close();
+                throw rethrow(t);
+            }
+            b.held = true;
+            return b;
+        }
+
+        long len() {
+            return view.get(JAVA_LONG, 16);
+        }
+
+        long itemsize() {
+            return view.get(JAVA_LONG, 24);
+        }
+
+        /** The first format character, or 0 if the format was not requested or is NULL. */
+        char format() {
+            MemorySegment f = view.get(ADDRESS, 40);
+            return f.equals(NULL) ? 0 : (char) f.reinterpret(1).get(JAVA_BYTE, 0);
+        }
+
+        MemorySegment data() {
+            return view.get(ADDRESS, 0).reinterpret(len());
+        }
+
+        @Override
+        public void close() {
+            if (held) {
+                held = false;
+                try {
+                    PyBuffer_Release.invokeExact(view);
+                } catch (Throwable t) {
+                    throw rethrow(t);
+                } finally {
+                    arena.close();
+                }
+            }
+        }
+    }
+
+    public static boolean checkBuffer(MemorySegment o) {
+        try {
+            return (int) PyObject_CheckBuffer.invokeExact(o) != 0;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    /** New list; steals the item references. */
+    public static MemorySegment newList(MemorySegment... items) {
+        try {
+            MemorySegment l = check((MemorySegment) PyList_New.invokeExact((long) items.length));
+            for (int i = 0; i < items.length; i++) {
+                int rc = (int) PyList_SetItem.invokeExact(l, (long) i, items[i]);
+                if (rc != 0) throw PyErrAlreadySet.INSTANCE;
+            }
+            return l;
         } catch (Throwable t) {
             throw rethrow(t);
         }
