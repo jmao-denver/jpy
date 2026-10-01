@@ -10,8 +10,8 @@ module in from Java: get_type, JType, JOverloadedMethod, JField, ...
 # ctypes is imported only inside the functions that need it, which all run Python-first. Java-first,
 # org.jpy.PyLib may stop and restart the interpreter, and re-importing _ctypes after Py_Finalize
 # aborts the process (CPython 3.12).
-import os
-import sys
+import os as _os
+import sys as _sys
 
 # Filled by Java. Same names and roles as in the C jpy module.
 types = {}
@@ -29,7 +29,7 @@ _pending_diag_flags = 0
 _pending_verbose_exceptions = False
 
 
-class Diag:
+class _Diag:
     """Controls output of diagnostic information for debugging"""
     __slots__ = ()
 
@@ -82,8 +82,12 @@ class VerboseExceptions:
             _pending_verbose_exceptions = value
 
 
-diag = Diag()
+# As in the C jpy, the module exposes the instances only; their classes print as jpy.Diag and
+# jpy.VerboseExceptions but are not module attributes.
+_Diag.__name__ = _Diag.__qualname__ = 'Diag'
+diag = _Diag()
 VerboseExceptions = VerboseExceptions()
+del _Diag
 
 
 _jvm = None  # JavaVM*, as an int; set only when this module created the JVM
@@ -138,12 +142,12 @@ def _vtable_fn(obj, index, restype, *argtypes):
 def _libpython_path():
     """The path of the libpython image this interpreter runs from."""
     import ctypes
-    override = os.environ.get('JPY_PYTHON_LIB')
+    override = _os.environ.get('JPY_PYTHON_LIB')
     if override:
         return override
-    if sys.platform == 'win32':
+    if _sys.platform == 'win32':
         buf = ctypes.create_unicode_buffer(32768)
-        ctypes.windll.kernel32.GetModuleFileNameW(ctypes.c_void_p(sys.dllhandle), buf, len(buf))
+        ctypes.windll.kernel32.GetModuleFileNameW(ctypes.c_void_p(_sys.dllhandle), buf, len(buf))
         return buf.value
 
     class _DlInfo(ctypes.Structure):
@@ -155,22 +159,22 @@ def _libpython_path():
     address = ctypes.cast(ctypes.pythonapi.Py_IncRef, ctypes.c_void_p)
     if not libc.dladdr(address, ctypes.byref(info)) or not info.dli_fname:
         raise RuntimeError("jpy: cannot locate the libpython shared library of this interpreter")
-    path = os.path.realpath(info.dli_fname.decode())
-    if os.path.realpath(path) == os.path.realpath(sys.executable):
+    path = _os.path.realpath(info.dli_fname.decode())
+    if _os.path.realpath(path) == _os.path.realpath(_sys.executable):
         raise RuntimeError("jpy: this Python is statically linked; the FFM jpy needs a shared libpython")
     return path
 
 
 def _ffm_classpath():
     """Where the jpy FFM Java classes live: an explicit override, a bundled jar, or the dev build."""
-    override = os.environ.get('JPY_FFM_CLASSPATH')
+    override = _os.environ.get('JPY_FFM_CLASSPATH')
     if override:
         return override
-    here = os.path.dirname(os.path.abspath(__file__))
-    jar = os.path.join(here, 'jpy-ffm.jar')
-    if os.path.exists(jar):
+    here = _os.path.dirname(_os.path.abspath(__file__))
+    jar = _os.path.join(here, 'jpy-ffm.jar')
+    if _os.path.exists(jar):
         return jar
-    return os.path.normpath(os.path.join(here, '..', 'build', 'classes'))
+    return _os.path.normpath(_os.path.join(here, '..', 'build', 'classes'))
 
 
 def _create_java_vm_fn():
@@ -180,15 +184,15 @@ def _create_java_vm_fn():
         return ctypes.CDLL(None).JNI_CreateJavaVM
     except (AttributeError, OSError):
         pass
-    java_home = os.environ.get('JAVA_HOME')
+    java_home = _os.environ.get('JAVA_HOME')
     if not java_home:
         raise RuntimeError("jpy: no JVM library loaded and JAVA_HOME is not set")
-    if sys.platform == 'win32':
-        lib = os.path.join(java_home, 'bin', 'server', 'jvm.dll')
-    elif sys.platform == 'darwin':
-        lib = os.path.join(java_home, 'lib', 'server', 'libjvm.dylib')
+    if _sys.platform == 'win32':
+        lib = _os.path.join(java_home, 'bin', 'server', 'jvm.dll')
+    elif _sys.platform == 'darwin':
+        lib = _os.path.join(java_home, 'lib', 'server', 'libjvm.dylib')
     else:
-        lib = os.path.join(java_home, 'lib', 'server', 'libjvm.so')
+        lib = _os.path.join(java_home, 'lib', 'server', 'libjvm.so')
     return ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL).JNI_CreateJavaVM
 
 
@@ -199,7 +203,7 @@ def _with_ffm_options(options):
     for option in options:
         if option.startswith('-Djava.class.path='):
             # First, so the FFM org.jpy classes win over a C jpy jar the caller may still list.
-            option = '-Djava.class.path=' + classpath + os.pathsep + option[len('-Djava.class.path='):]
+            option = '-Djava.class.path=' + classpath + _os.pathsep + option[len('-Djava.class.path='):]
             has_classpath = True
         result.append(option)
     if not has_classpath:
@@ -262,7 +266,7 @@ def _install(env):
     install = get_static_method_id(bootstrap, b"install", b"(J)V")
     if not install:
         fail("jpy: org.jpy.ffm.Bootstrap.install(long) not found")
-    jvalues = (ctypes.c_int64 * 1)(id(sys.modules[__name__]))
+    jvalues = (ctypes.c_int64 * 1)(id(_sys.modules[__name__]))
     call_static_void(bootstrap, install, ctypes.cast(jvalues, ctypes.c_void_p))
     if exception_check():
         fail("jpy: FFM bridge installation failed")

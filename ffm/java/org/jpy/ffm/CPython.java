@@ -70,6 +70,8 @@ public final class CPython {
     public static final int Py_tp_getset = 73;
 
     public static final long Py_TPFLAGS_DISALLOW_INSTANTIATION = 1L << 7;
+    /** Type attributes cannot be set or deleted from Python, like the C jpy's static types. Not inherited. */
+    public static final long Py_TPFLAGS_IMMUTABLETYPE = 1L << 8;
     public static final long Py_TPFLAGS_BASETYPE = 1L << 10;
 
     public static final int Py_LT = 0, Py_LE = 1, Py_EQ = 2, Py_NE = 3, Py_GT = 4, Py_GE = 5;
@@ -215,13 +217,25 @@ public final class CPython {
         }
     }
 
-    /** Sets a type attribute through type's own setattr, bypassing jpy.JTypeMeta's hook. */
-    public static void typeSetAttr(MemorySegment type, String name, MemorySegment value) {
-        MemorySegment key = newStr(name);
+    static final MethodHandle PyType_GetDict = dc("PyType_GetDict", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    static final MethodHandle PyType_Modified = dc("PyType_Modified", FunctionDescriptor.ofVoid(ADDRESS));
+
+    /**
+     * Puts an entry into a type's own dict, as the C jpy does with tp_dict. Works on immutable
+     * types, where setattr raises TypeError, and bypasses jpy.JTypeMeta's hook. PyType_Modified
+     * drops CPython's attribute cache for the type.
+     */
+    public static void typeDictSet(MemorySegment type, String name, MemorySegment value) {
         try {
-            if (typeSetAttr(type, key, value) != 0) throw PyErrAlreadySet.INSTANCE;
-        } finally {
-            decRef(key);
+            MemorySegment dict = check((MemorySegment) PyType_GetDict.invokeExact(type));
+            try {
+                dictSet(dict, name, value);
+            } finally {
+                decRef(dict);
+            }
+            PyType_Modified.invokeExact(type);
+        } catch (Throwable t) {
+            throw rethrow(t);
         }
     }
 

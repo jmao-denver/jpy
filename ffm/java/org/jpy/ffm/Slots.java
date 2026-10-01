@@ -7,6 +7,7 @@ import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.List;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
@@ -58,6 +59,8 @@ final class Slots {
     static final MemorySegment OM_DEALLOC = stub("omDealloc", FunctionDescriptor.ofVoid(ADDRESS));
     static final MemorySegment FIELD_REPR = stub("fieldRepr", FunctionDescriptor.of(ADDRESS, ADDRESS));
     static final MemorySegment FIELD_DEALLOC = stub("fieldDealloc", FunctionDescriptor.ofVoid(ADDRESS));
+    static final MemorySegment FIELD_STR = stub("fieldStr", FunctionDescriptor.of(ADDRESS, ADDRESS));
+    static final MemorySegment FIELD_GET = stub("fieldGet", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
 
     // ---- stubs for jpy.JTypeMeta, the metaclass of all Java types ----
 
@@ -98,6 +101,11 @@ final class Slots {
         return defs;
     }
 
+    /** A tp_doc string; PyType_FromSpec copies it. */
+    private static long doc(String text) {
+        return Arena.global().allocateFrom(text).address();
+    }
+
     /** PyMethodDef[] { name, meth, flags, doc } + sentinel, all METH_VARARGS. */
     private static MemorySegment methodDefs(String[] names, String[] javaMethods, String[] docs) {
         Arena forever = Arena.global();
@@ -114,20 +122,25 @@ final class Slots {
 
     /** Creates jpy.JTypeMeta, jpy.JType, jpy.JOverloadedMethod and jpy.JField and adds them to the module. */
     static void createModuleTypes(MemorySegment module) {
-        long noNew = CPython.Py_TPFLAGS_DISALLOW_INSTANTIATION;
+        // Immutable like the C jpy's static types: setting an attribute on them raises TypeError.
+        long fixed = CPython.Py_TPFLAGS_IMMUTABLETYPE;
+        long noNew = CPython.Py_TPFLAGS_DISALLOW_INSTANTIATION | fixed;
         // A real heap subclass of `type`; Java types are created through PyType_FromMetaclass with it.
-        metaType = JTypes.fromSpec("jpy.JTypeMeta", CPython.Py_TPFLAGS_BASETYPE, List.of(
+        metaType = JTypes.fromSpec("jpy.JTypeMeta", CPython.Py_TPFLAGS_BASETYPE | fixed, List.of(
                 new long[]{CPython.Py_tp_getattro, META_GETATTRO.address()},
                 new long[]{CPython.Py_tp_setattro, META_SETATTRO.address()}), CPython.PyType_Type);
         CPython.setAttr(module, "JTypeMeta", metaType);
-        JTypes.rootType = JTypes.fromSpec("jpy.JType", CPython.Py_TPFLAGS_BASETYPE | noNew, List.of(), null);
+        JTypes.rootType = JTypes.fromSpec("jpy.JType", CPython.Py_TPFLAGS_BASETYPE | noNew, List.of(
+                new long[]{CPython.Py_tp_doc, doc("Java Meta Type")}), null);
         overloadedMethodType = JTypes.fromSpec("jpy.JOverloadedMethod", noNew, List.of(
+                new long[]{CPython.Py_tp_doc, doc("Java Overloaded Method")},
                 new long[]{CPython.Py_tp_call, OM_CALL.address()},
                 new long[]{CPython.Py_tp_repr, OM_REPR.address()},
                 new long[]{CPython.Py_tp_str, OM_STR.address()},
                 new long[]{CPython.Py_tp_dealloc, OM_DEALLOC.address()},
                 new long[]{CPython.Py_tp_getset, getsets(OM_GET, "decl_class", "name", "methods").address()}), null);
         methodType = JTypes.fromSpec("jpy.JMethod", noNew, List.of(
+                new long[]{CPython.Py_tp_doc, doc("Java Method Wrapper")},
                 new long[]{CPython.Py_tp_repr, JM_REPR.address()},
                 new long[]{CPython.Py_tp_str, JM_STR.address()},
                 new long[]{CPython.Py_tp_getset, getsets(JM_GET, "name", "param_count", "is_static").address()},
@@ -145,8 +158,11 @@ final class Slots {
                                 "Sets whether the method parameter given by index is the return value"}).address()}), null);
         CPython.setAttr(module, "JMethod", methodType);
         fieldType = JTypes.fromSpec("jpy.JField", noNew, List.of(
+                new long[]{CPython.Py_tp_doc, doc("Java Field Wrapper")},
                 new long[]{CPython.Py_tp_repr, FIELD_REPR.address()},
-                new long[]{CPython.Py_tp_dealloc, FIELD_DEALLOC.address()}), null);
+                new long[]{CPython.Py_tp_str, FIELD_STR.address()},
+                new long[]{CPython.Py_tp_dealloc, FIELD_DEALLOC.address()},
+                new long[]{CPython.Py_tp_getset, getsets(FIELD_GET, "name", "is_static", "is_final").address()}), null);
         CPython.setAttr(module, "JType", JTypes.rootType);
         CPython.setAttr(module, "JOverloadedMethod", overloadedMethodType);
         CPython.setAttr(module, "JField", fieldType);
@@ -726,12 +742,51 @@ final class Slots {
         }
     }
 
+    private static JFieldInfo field(MemorySegment self) {
+        JFieldInfo f = JFieldInfo.BY_PYOBJ.get(self.address());
+        if (f == null) {
+            throw CPython.runtimeError("internal error: unknown jpy.JField");
+        }
+        return f;
+    }
+
+    /**
+     * JField_repr. The C jpy prints the JNI field ID as fid; there is none here, so fid is the
+     * Field's identity hash, which is just as opaque.
+     */
     static MemorySegment fieldRepr(MemorySegment self) {
         try {
-            JFieldInfo f = JFieldInfo.BY_PYOBJ.get(self.address());
-            String s = f == null ? "jpy.JField(?)"
-                    : "jpy.JField(class='" + f.declaringType.name + "', name='" + f.name + "')";
-            return CPython.newStr(s);
+            JFieldInfo f = field(self);
+            int mods = f.field.getModifiers();
+            return CPython.newStr("jpy.JField(name='" + f.name + "', is_static=" + (Modifier.isStatic(mods) ? 1 : 0)
+                    + ", is_final=" + (Modifier.isFinal(mods) ? 1 : 0)
+                    + ", fid=0x" + Integer.toHexString(System.identityHashCode(f.field)) + ")");
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    /** JField_str: the field name. */
+    static MemorySegment fieldStr(MemorySegment self) {
+        try {
+            return CPython.newStr(field(self).name);
+        } catch (Throwable t) {
+            CPython.setPythonError(t);
+            return NULL;
+        }
+    }
+
+    /** JField_members: name, is_static, is_final (closure = index). */
+    static MemorySegment fieldGet(MemorySegment self, MemorySegment closure) {
+        try {
+            JFieldInfo f = field(self);
+            int mods = f.field.getModifiers();
+            return switch ((int) closure.address()) {
+                case 0 -> CPython.newStr(f.name);
+                case 1 -> CPython.newBool(Modifier.isStatic(mods));
+                default -> CPython.newBool(Modifier.isFinal(mods));
+            };
         } catch (Throwable t) {
             CPython.setPythonError(t);
             return NULL;

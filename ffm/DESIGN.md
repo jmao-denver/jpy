@@ -366,6 +366,34 @@ jpy also prints `printf` trace lines for type resolution, method matching,
 execution, memory, the JVM and errors. Those are not ported. Their text is
 debugging output, not API, and no test reads it.
 
+## 15. Introspection parity with the C jpy
+
+`ffm/tests/ffm_introspection_test.py` compares about 800 introspection
+facts (type names, flags, dicts, `dir()`, docs, method and overload objects,
+their attributes and error messages, module names) with the C jpy's output,
+recorded per interpreter by `ffm/tests/make_c_reference.sh` into
+`ffm/tests/data`. The reference was recorded with JDK 25, since `dir()` of a
+Java class lists that JDK's methods, so other JDKs skip the test.
+
+Everything matches except these differences, which come from building
+types with `PyType_FromSpec` (heap types) and from the metaclass:
+
+| fact | C jpy | FFM jpy |
+|---|---|---|
+| `type(T)` | `type` | `jpy.JTypeMeta` (§1) |
+| heap-type flag | off | on |
+| `T.__basicsize__` | 24 (56 for primitive arrays) | 16: no per-object C struct |
+| `'__module__'` in `T.__dict__` and `dir()` | absent | present; `T.__module__` is the same |
+| `jpy.JTypeMeta` in the module | absent | present |
+
+Fixed to match (2026-10-01): Java types and jpy's own types are immutable
+(`T.x = 1` raises `TypeError`), so the bridge writes type dicts with
+`PyType_GetDict` and `PyType_Modified`, as the C jpy writes `tp_dict`.
+Primitive types have no `jclass`/`jclassname`. `jpy.JField` has the C repr,
+`str`, and `name`/`is_static`/`is_final`. The C docstrings of `jpy.JType`,
+`JOverloadedMethod`, `JMethod` and `JField`. The module no longer shows
+`Diag`, `os` or `sys`.
+
 ## How to reproduce
 
 ```
@@ -383,4 +411,5 @@ jpy fails them by design, so they stay out of `src/test/python` while both
 implementations exist): `ffm_bridge_test.py` (identity, calls, overloads,
 fields, arrays, errors), `ffm_static_fields_test.py` (§11),
 `ffm_buffer_test.py` (§12; all but the late-access test also pass on the C
-jpy) and `ffm_exceptions_test.py` (§14).
+jpy), `ffm_exceptions_test.py` (§14) and `ffm_introspection_test.py`
+(§15).

@@ -179,6 +179,12 @@ Speedups are a bonus concentrated in the scalar-UDF path.
 Full suite after session 7 (2026-10-01): **154/154 pass** on 3.12, all 22
 files green. FFM extras 44/44. JUnit 81/81 on all five interpreters.
 
+Introspection parity (2026-10-01): about 800 facts about types, methods and
+fields compared with the C jpy on all five interpreters
+(`ffm/tests/ffm_introspection_test.py`). Five differences fixed; five kept,
+all from heap types and the metaclass (`ffm/DESIGN.md` §15). FFM extras
+45/45.
+
 Full suite after session 6 (2026-10-01): **151/154 pass, 0 failures**, 3
 errors, 0 crashes; 20 of 22 files fully green. FFM extras 37/37. JUnit:
 81/81 on all five interpreters, run as jpy's CI runs them, with

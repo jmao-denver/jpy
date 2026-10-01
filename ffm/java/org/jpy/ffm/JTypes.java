@@ -115,8 +115,14 @@ public final class JTypes {
         return jt;
     }
 
-    /** JType_AddClassAttribute: T.jclass is the wrapped java.lang.Class, T.jclassname its name. */
+    /**
+     * JType_AddClassAttribute: T.jclass is the wrapped java.lang.Class, T.jclassname its name.
+     * Primitive types have neither: the C jpy creates them before java.lang.Class exists.
+     */
     static void addClassAttribute(JavaType jt) {
+        if (jt.clazz.isPrimitive()) {
+            return;
+        }
         MemorySegment jclass = JObjects.wrap(jt.clazz, classType);
         try {
             publish(jt, "jclass", jclass);
@@ -132,11 +138,12 @@ public final class JTypes {
     }
 
     /**
-     * Puts a bridge-owned entry into a Java type's dict. Goes through type's own setattr, not
-     * jpy.JTypeMeta's hook, so publishing never triggers resolution or static-field writes.
+     * Puts a bridge-owned entry into a Java type's dict. Writes the dict directly: Java types are
+     * immutable, as in the C jpy, and jpy.JTypeMeta's hook must not run, so publishing never
+     * triggers resolution or static-field writes.
      */
     private static void publish(JavaType jt, String name, MemorySegment value) {
-        CPython.typeSetAttr(jt.pyType, name, value);
+        CPython.typeDictSet(jt.pyType, name, value);
         jt.dictNames.add(name);
     }
 
@@ -184,11 +191,11 @@ public final class JTypes {
         if (dotless) {
             slots.add(new long[]{CPython.Py_tp_members, MODULE_PLACEHOLDER_MEMBER.address()});
         }
-        MemorySegment pyType = fromSpec(jt.name, CPython.Py_TPFLAGS_BASETYPE, slots, base, Slots.metaType);
+        MemorySegment pyType = fromSpec(jt.name, CPython.Py_TPFLAGS_BASETYPE | CPython.Py_TPFLAGS_IMMUTABLETYPE, slots, base, Slots.metaType);
         if (dotless) {
             MemorySegment builtins = CPython.newStr("builtins");
             try {
-                CPython.typeSetAttr(pyType, "__module__", builtins);
+                CPython.typeDictSet(pyType, "__module__", builtins);
             } finally {
                 CPython.decRef(builtins);
             }
