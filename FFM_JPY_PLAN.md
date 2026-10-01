@@ -104,6 +104,17 @@ Speedups are a bonus concentrated in the scalar-UDF path.
 |---|---|
 | 1. Type system | **done 2026-09-30**: `jpy_gettype_test.py` 8/8 on 3.12, 3.13, 3.14, 3.13t, 3.14t; design note `ffm/DESIGN.md` awaiting review |
 
+Full-suite baseline after session 1 (2026-10-01, CPython 3.12 + numpy,
+`ffm/suite.py`): all 22 Python test files from setup.py, 154 tests: **70
+pass**, 6 fail, 78 error, **0 crashes, 0 timeouts**. Files fully green:
+gettype, field, retval, typeres, translation, obj, mt. Every failure traces
+to a feature a later session owns: Java-side `org.jpy.PyObject`/`PyLib`/
+`PyInputMode` (43, session 6), `jpy.array` (25, session 5), `jpy.convert`/
+`cast` (9), `diag`/`VerboseExceptions` (3, session 7), return/mutable
+parameters via `type_callbacks` (6, session 4). None is a type-creation bug.
+The Java JUnit tests (Java to Python) do not compile yet: they need
+`org.jpy.PyLib`, `PyObject`, `PyModule`, `PyInputMode` (session 6).
+
 ## Execution plan: 9 hands-off agent sessions
 
 Each session ends with committed code and a pass/fail verdict defined by the
