@@ -9,6 +9,7 @@ Exit code 0 only if every step passed.
 """
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,12 @@ JARS = {
 JUNIT_CLASSES = ['org.jpy.JavaReflectionTest', 'org.jpy.LifeCycleTest', 'org.jpy.PyLibTest',
                  'org.jpy.PyLibWithSysPathTest', 'org.jpy.PyModuleTest', 'org.jpy.PyObjectTest',
                  'org.jpy.PyProxyTest', 'org.jpy.jsr223.Jsr223Test']
+# Bugs in jpy's own tests, not in the bridge: they match Python's default repr against
+# "at 0x[0-9a-f]+", but on Windows CPython prints the address in upper case (printf "%p").
+# jpy's CI never runs the JUnit tests on Windows. Any other failure still fails the run.
+KNOWN_JUNIT_FAILURES = {
+    'win32': {'strNotDefined(org.jpy.PyObjectTest)', 'doesNotHaveStrToString(org.jpy.PyProxyTest)'},
+}
 
 
 def java_home():
@@ -110,7 +117,21 @@ def junit():
            '-cp', os.pathsep.join([CLASSES, TEST_CLASSES] + test_jars()),
            'org.junit.runner.JUnitCore'] + JUNIT_CLASSES
     print('\njpy JUnit tests (Java-first), pythonLib=' + python_lib, flush=True)
-    return subprocess.run(cmd, cwd=ROOT, env=env).returncode == 0
+    proc = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, errors='replace')
+    failed = []
+    for line in proc.stdout:
+        print(line, end='', flush=True)
+        m = re.match(r'^\d+\) (\S+\(\S+\))$', line.strip())
+        if m:
+            failed.append(m.group(1))
+    if proc.wait() == 0:
+        return True
+    known = KNOWN_JUNIT_FAILURES.get(sys.platform, set())
+    if failed and set(failed) <= known:
+        print('only known failures of jpy\'s own tests on %s: %s' % (sys.platform, ', '.join(sorted(failed))))
+        return True
+    return False
 
 
 def main():
