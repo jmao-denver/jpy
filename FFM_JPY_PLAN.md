@@ -180,9 +180,25 @@ Speedups are a bonus concentrated in the scalar-UDF path.
 Full suite after session 7 (2026-10-01): **154/154 pass** on 3.12, all 22
 files green. FFM extras 44/44. JUnit 81/81 on all five interpreters.
 
-The definition of done is met on macOS arm64: jpy's own test suites pass
-unmodified on every supported interpreter. Session 9 (Linux, Windows)
-remains.
+| 9. Linux and Windows | **done 2026-10-02**: `.github/workflows/ffm.yml` on `jmao-denver/jpy` branch `ffm-jpy`, run 37058526470: all 20 jobs green, Linux x64, Linux arm64, Windows x64 and macOS arm64 × 3.12, 3.13, 3.14, 3.13t, 3.14t, JDK 25. Each runs `ffm/ci.py`: jpy's Python suite 154/154, FFM extras 49/49, jpy's JUnit tests 81/81, except on Windows two JUnit tests of jpy's own that assume lowercase hex in Python's default repr (`PyObjectTest.strNotDefined`, `PyProxyTest.doesNotHaveStrToString`); C jpy's CI never runs JUnit on Windows. Fixed for Windows: `PyBool_FromLong` (C `long` is 32-bit there), finding `jvm.dll`. Linux is also scripted in Docker (`ffm/docker/run.sh`) |
+
+The definition of done is met: jpy's own test suites pass unmodified on
+Linux, Windows and macOS, on every supported interpreter, except the two
+Windows-only test bugs above.
+
+Deephaven Core, first try (2026-10-02), Python-first with the embedded
+Deephaven 43.0 server, the FFM jpy wheel (`ffm/package.py`) swapped for the
+C jpy in a copy of the same venv, JDK 25:
+- A 21-check smoke test (tables, Python UDFs, pandas/numpy with nulls,
+  joins, errors) gives identical results on both jpys.
+- Scalar Python UDF: about 2x faster (1040 vs 2015 ns per row).
+- Auto-vectorized Python UDF: about 25% slower (398 vs 314 ns per row).
+  Deephaven reads and writes Java arrays one element at a time from Python
+  there, and each element access is an upcall into Java that also does
+  type lookups and boxing. Top performance item.
+- Deephaven 43's default JVM options include
+  `-XX:GCLockerRetryAllocationCount`, which JDK 25 no longer accepts, so
+  Deephaven needs that removed to run on JDK 25 with either jpy.
 
 Introspection parity (2026-10-01): about 800 facts about types, methods and
 fields compared with the C jpy on all five interpreters
