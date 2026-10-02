@@ -129,6 +129,17 @@ again after `Py_Finalize`.
 libpython is found with `dladdr` on a Python API symbol, not `sysconfig`.
 uv's Python builds report a baked-in `/install` prefix there.
 
+Python-first needs the running Python to use a shared libpython (decided
+2026-10-02, a narrow gap). On Linux some Pythons have libpython built into
+the executable: Ubuntu's and Debian's own `python3`, and uv's Linux builds.
+There `dladdr` finds the executable itself, and `jpy.py` stops with "this
+Python is statically linked; the FFM jpy needs a shared libpython". Loading
+a libpython file from disk instead is not an option: uv ships one next to
+its executable, and binding to it would mean a second, uninitialized copy
+of Python in the process. Workaround: a Python built with a shared
+libpython, such as the official `python` Docker images. macOS (uv, the
+python.org installer) and Windows Pythons use a shared libpython.
+
 ## 6. Two CPython details worth knowing
 
 - `PyType_FromSpec` warns (and fails under `-W error`) for spec names without

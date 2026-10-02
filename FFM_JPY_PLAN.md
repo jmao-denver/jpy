@@ -19,7 +19,7 @@ that is a drop-in for the current JNI jpy:
 |---|---|
 | CPython 3.12+ only | 3.12 added buffer slots to `PyType_FromSpec` and `PyType_FromMetaclass`; a 3.12 floor keeps the implementation functions-only — no version-specific struct layouts anywhere |
 | JDK 25+ (LTS) | decided 2026-10-01: JDK 25 is the first LTS with FFM final (FFM is final since 22, which is not LTS); a single LTS floor keeps the support matrix small |
-| shared libpython required | matches today's Java-first requirement; drops the dlsym fallback. Deliberate small regression vs today's Python-first mode on statically linked Pythons |
+| shared libpython required | matches today's Java-first requirement; drops the dlsym fallback. Confirmed 2026-10-02 as a narrow gap with an easy workaround: it affects only Python-first on Linux with a Python whose executable has libpython built in, such as Ubuntu's and Debian's own `python3` and uv's Linux builds (checked in Docker). C jpy works there because a C extension finds Python's functions in the executable. Workaround: a Linux Python built with a shared libpython (the official `python` Docker images; any `--enable-shared` build), or Java-first. The FFM jpy stops at once with a clear message on such a Python. Java-first is unaffected: Deephaven's server images already install Ubuntu's separate `libpython` package for it |
 | quirks replicated, not fixed | drop-in means bug-for-bug: smallest-box untyped ints (5 -> Byte), char <-> int, truthiness bools, silent narrowing truncation, string-flattened exceptions |
 | dual-track release | Deephaven drives this, but jpy has other users (ESA SNAP et al.) on older stacks. FFM jpy ships as a new major version beside a maintained JNI line; the old build matrix retires only when the JNI line does |
 
