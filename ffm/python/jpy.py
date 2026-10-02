@@ -178,16 +178,20 @@ def _ffm_classpath():
 
 
 def _create_java_vm_fn():
-    """JNI_CreateJavaVM from an already loaded libjvm, else from JAVA_HOME."""
+    """JNI_CreateJavaVM from an already loaded libjvm (jpyutil preloads it), else from JAVA_HOME."""
     import ctypes
     try:
-        return ctypes.CDLL(None).JNI_CreateJavaVM
+        # Windows has no handle for "the whole process"; loading jvm.dll by name finds the loaded one.
+        loaded = ctypes.CDLL('jvm.dll' if _sys.platform == 'win32' else None)
+        return loaded.JNI_CreateJavaVM
     except (AttributeError, OSError):
         pass
     java_home = _os.environ.get('JAVA_HOME')
     if not java_home:
         raise RuntimeError("jpy: no JVM library loaded and JAVA_HOME is not set")
     if _sys.platform == 'win32':
+        # jvm.dll loads DLLs that sit in the JDK's bin directory
+        _os.add_dll_directory(_os.path.join(java_home, 'bin'))
         lib = _os.path.join(java_home, 'bin', 'server', 'jvm.dll')
     elif _sys.platform == 'darwin':
         lib = _os.path.join(java_home, 'lib', 'server', 'libjvm.dylib')

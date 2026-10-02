@@ -150,7 +150,6 @@ public final class CPython {
     static final MethodHandle PyLong_AsLongLong = dc("PyLong_AsLongLong", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
     static final MethodHandle PyFloat_FromDouble = dc("PyFloat_FromDouble", FunctionDescriptor.of(ADDRESS, JAVA_DOUBLE));
     static final MethodHandle PyFloat_AsDouble = dc("PyFloat_AsDouble", FunctionDescriptor.of(JAVA_DOUBLE, ADDRESS));
-    static final MethodHandle PyBool_FromLong = dc("PyBool_FromLong", FunctionDescriptor.of(ADDRESS, JAVA_LONG));
     static final MethodHandle PyNumber_Check = dc("PyNumber_Check", FunctionDescriptor.of(JAVA_INT, ADDRESS));
 
     static final MethodHandle PyTuple_New = dc("PyTuple_New", FunctionDescriptor.of(ADDRESS, JAVA_LONG));
@@ -526,12 +525,14 @@ public final class CPython {
         }
     }
 
+    /**
+     * A new reference to True or False. Not PyBool_FromLong: its argument is a C long, which is
+     * 32 bits on Windows and 64 elsewhere, so no single FFM descriptor fits every platform.
+     */
     public static MemorySegment newBool(boolean v) {
-        try {
-            return check((MemorySegment) PyBool_FromLong.invokeExact(v ? 1L : 0L));
-        } catch (Throwable t) {
-            throw rethrow(t);
-        }
+        MemorySegment b = v ? Py_True : Py_False;
+        incRef(b);
+        return b;
     }
 
     /** PyLong_AsLongLong; raises on overflow or non-int. */

@@ -76,6 +76,9 @@ def run(test, python, env):
         status = 'TIMEOUT'
     elif code < 0:
         status = 'CRASH (' + signal.Signals(-code).name + ')'
+    elif code >= 0xC0000000:
+        # Windows reports a native crash as an NTSTATUS exit code, e.g. 0xC0000005 (access violation)
+        status = 'CRASH (0x%08X)' % code
     elif 'Fatal Python error' in out or 'A fatal error has been detected by the Java Runtime' in out:
         status = 'CRASH'
     elif ran == 0:
@@ -89,14 +92,18 @@ def run(test, python, env):
 
 
 def run_section(title, tests, python, env):
+    """Prints a scoreboard; returns True if every file is OK."""
     print(f'\n{title}')
     print(f'{"test file":34s} {"status":16s} {"ran":>4s} {"pass":>5s} {"fail":>5s} {"err":>4s} {"skip":>5s} {"secs":>6s}')
     totals = [0, 0, 0, 0, 0]
+    all_ok = True
     for test in tests:
         t, status, ran, passed, fail, err, skip, secs = run(test, python, env)
+        all_ok &= status == 'OK'
         totals = [a + b for a, b in zip(totals, [ran, passed, fail, err, skip])]
         print(f'{t:34s} {status:16s} {ran:4d} {passed:5d} {fail:5d} {err:4d} {skip:5d} {secs:6.1f}', flush=True)
     print(f'{"TOTAL":34s} {"":16s} {totals[0]:4d} {totals[1]:5d} {totals[2]:5d} {totals[3]:4d} {totals[4]:5d}')
+    return all_ok
 
 
 def main():
@@ -108,11 +115,11 @@ def main():
 
     print(f'python: {python}')
     if sys.argv[1:]:
-        run_section('selected tests', sys.argv[1:], python, env)
-        return
-    run_section("jpy's own suite (src/test/python, unmodified)", DEFAULT, python, env)
-    run_section('FFM extras (ffm/tests, FFM-only behavior)', ffm_extras(), python, env)
+        return 0 if run_section('selected tests', sys.argv[1:], python, env) else 1
+    ok = run_section("jpy's own suite (src/test/python, unmodified)", DEFAULT, python, env)
+    ok &= run_section('FFM extras (ffm/tests, FFM-only behavior)', ffm_extras(), python, env)
+    return 0 if ok else 1
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

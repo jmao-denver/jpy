@@ -1,0 +1,46 @@
+name: FFM jpy
+
+on:
+  push:
+    branches: [ 'ffm-**' ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ 'ubuntu-latest', 'ubuntu-24.04-arm', 'windows-latest', 'macos-latest' ]
+        python: [ '3.12', '3.13', '3.14', '3.13t', '3.14t' ]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '25'
+
+      # Python-first needs a Python whose executable uses a shared libpython (ffm/DESIGN.md §5).
+      - name: Python facts
+        run: python -c "import sys, sysconfig; print(sys.version, sys.platform); print('Py_ENABLE_SHARED =', sysconfig.get_config_var('Py_ENABLE_SHARED')); print('GIL disabled build =', sysconfig.get_config_var('Py_GIL_DISABLED'))"
+
+      - run: python -m pip install numpy
+
+      - name: Build and test (ffm/ci.py)
+        run: python ffm/ci.py
+
+      - name: Upload logs
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: ffm-logs-${{ matrix.os }}-${{ matrix.python }}
+          path: |
+            ffm/build/suite/*.log
+            **/hs_err_pid*.log
+          if-no-files-found: ignore
