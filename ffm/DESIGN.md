@@ -120,8 +120,23 @@ functions and types to the same module object. `ffm/python/jpyutil.py` is
 the current `jpyutil.py` with one change: it passes the exact libpython path
 and an empty `jdl` path to `PyLibInitializer` (there is no `jdl` module).
 
-`create_jvm` puts the FFM classes first on the class path, so they win over
-a C jpy jar the caller may still list. `jpy.py` imports ctypes only inside
+`create_jvm` puts the jar bundled in the wheel (`jpy-ffm.jar`) first on
+the class path, so its classes win over a C jpy jar the caller may still
+list. One exception (decided 2026-10-05): when the first jpy jar on the
+caller's class path is already an FFM jpy jar, for example
+`org.jpyconsortium:jpy` 3.x from Maven in an application such as Deephaven,
+the caller's class path is used as is. The JVM then sees one copy of the
+`org.jpy` classes. "jpy jar" means an entry whose name contains `jpy` and
+that holds `org/jpy/PyLib.class`, so `deephaven-jpy-ext` is skipped. An FFM
+one also holds `org/jpy/ffm/Bootstrap.class`. `JPY_FFM_CLASSPATH` overrides
+both and is always put first. Covered by `ffm/tests/ffm_classpath_test.py`.
+
+Splitting `org.jpy.ffm` into its own jar would not avoid the duplicate.
+`org.jpy.PyLib` calls the bridge and the bridge calls back into `org.jpy`,
+so both halves are needed in both directions, and both the wheel and Maven
+must carry the bridge.
+
+`jpy.py` imports ctypes only inside
 the functions that need it, which all run Python-first. Java-first, Java
 may stop and restart Python, and CPython aborts when `_ctypes` is imported
 again after `Py_Finalize`.
@@ -174,6 +189,7 @@ listed separately in §11.
 | `PyLib.pyDictContains` never releases the converted key | released | reference leak |
 | `PyLib.stopPython` from Python-first calls `PyEval_RestoreThread(NULL)` | does nothing | crash |
 | `getIntValue`/`getLongValue` go through C `long`, 32-bit on Windows | 64-bit everywhere | Windows truncation; same on macOS and Linux |
+| Python to Java works without the jpy jar; `org.jpy.PyObject` is optional | the jar is always needed | the bridge itself is Java; the wheel bundles the jar and `create_jvm` adds it (§5) |
 
 ## 8. Threading
 

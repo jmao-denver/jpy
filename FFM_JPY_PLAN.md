@@ -94,6 +94,18 @@ thread, the same risk as a global switch. Copy semantics stay.
 package data) instead of today's ~38 binary wheels. Zero compiled code of
 any kind: no Python extensions, no per-platform JNI libraries.
 
+**Publishing (proposed 2026-10-05):** same coordinates as today, new major
+version. The jar goes to Maven as `org.jpyconsortium:jpy` 3.x and the wheel to
+PyPI as `jpy` 3.x, so Deephaven changes two version numbers. The jar holds
+both `org.jpy` and `org.jpy.ffm`, and the wheel bundles the same jar. When an
+application's class path already starts its jpy jars with an FFM jpy jar,
+`jpy.create_jvm` uses that one and does not add the bundled copy, so the JVM
+sees one copy (`ffm/DESIGN.md` §5). Unlike C jpy, the jar is needed even for
+Python-to-Java use, because the bridge is Java code. Deephaven must also run
+on JDK 25, drop `-XX:GCLockerRetryAllocationCount=128` from
+`dh-default.vmoptions`, and pass `--enable-native-access=ALL-UNNAMED` when
+Java starts first.
+
 ## Evidence so far (all committed, all green)
 
 Prototype on macOS arm64, JDK 25, CPython 3.12.12:

@@ -203,18 +203,62 @@ def _create_java_vm_fn():
     return ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL).JNI_CreateJavaVM
 
 
+_PYLIB_CLASS = 'org/jpy/PyLib.class'
+_BRIDGE_CLASS = 'org/jpy/ffm/Bootstrap.class'
+
+
+def _jpy_kind(entry):
+    """'ffm' for an FFM jpy jar or class directory, 'c' for a C jpy one, None for anything else."""
+    if _os.path.isdir(entry):
+        def has(name):
+            return _os.path.isfile(_os.path.join(entry, *name.split('/')))
+    elif _os.path.isfile(entry):
+        import zipfile
+        try:
+            with zipfile.ZipFile(entry) as z:
+                names = set(z.namelist())
+        except (OSError, zipfile.BadZipFile):
+            return None
+
+        def has(name):
+            return name in names
+    else:
+        return None
+    if not has(_PYLIB_CLASS):
+        return None
+    return 'ffm' if has(_BRIDGE_CLASS) else 'c'
+
+
+def _caller_has_ffm_jar(classpath):
+    """
+    True when the first jpy jar on the caller's class path is an FFM jpy jar, for example
+    org.jpyconsortium:jpy 3.x from Maven on an application's class path. That jar's org.jpy classes
+    are the ones the JVM loads, so the bundled jar is not needed. Only entries whose name contains
+    'jpy' are opened, so a long class path stays cheap. Entries without org.jpy.PyLib, such as
+    Deephaven's deephaven-jpy-ext jar, are skipped.
+    """
+    for entry in classpath.split(_os.pathsep):
+        if 'jpy' in _os.path.basename(entry.rstrip('/\\')).lower():
+            kind = _jpy_kind(entry)
+            if kind is not None:
+                return kind == 'ffm'
+    return False
+
+
 def _with_ffm_options(options):
-    classpath = _ffm_classpath()
+    override = _os.environ.get('JPY_FFM_CLASSPATH')
     result = []
     has_classpath = False
     for option in options:
         if option.startswith('-Djava.class.path='):
-            # First, so the FFM org.jpy classes win over a C jpy jar the caller may still list.
-            option = '-Djava.class.path=' + classpath + _os.pathsep + option[len('-Djava.class.path='):]
+            callers = option[len('-Djava.class.path='):]
+            if override or not _caller_has_ffm_jar(callers):
+                # First, so the FFM org.jpy classes win over a C jpy jar the caller may still list.
+                option = '-Djava.class.path=' + _ffm_classpath() + _os.pathsep + callers
             has_classpath = True
         result.append(option)
     if not has_classpath:
-        result.append('-Djava.class.path=' + classpath)
+        result.append('-Djava.class.path=' + _ffm_classpath())
     result.append('-Djpy.pythonLib=' + _libpython_path())
     result.append('--enable-native-access=ALL-UNNAMED')
     return result
