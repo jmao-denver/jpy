@@ -29,10 +29,11 @@ public final class Dl {
     private static final MethodHandle DLOPEN;
     private static final MethodHandle DLCLOSE;
     private static final MethodHandle DLERROR;
+    private static final MethodHandle DLSYM;
 
     static {
         if (WINDOWS) {
-            DLOPEN = DLCLOSE = DLERROR = null;
+            DLOPEN = DLCLOSE = DLERROR = DLSYM = null;
         } else {
             Linker linker = Linker.nativeLinker();
             SymbolLookup libc = linker.defaultLookup();
@@ -44,6 +45,7 @@ public final class Dl {
             DLOPEN = linker.downcallHandle(lookup.find("dlopen").orElseThrow(), FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT));
             DLCLOSE = linker.downcallHandle(lookup.find("dlclose").orElseThrow(), FunctionDescriptor.of(JAVA_INT, ADDRESS));
             DLERROR = linker.downcallHandle(lookup.find("dlerror").orElseThrow(), FunctionDescriptor.of(ADDRESS));
+            DLSYM = linker.downcallHandle(lookup.find("dlsym").orElseThrow(), FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
         }
     }
 
@@ -80,6 +82,28 @@ public final class Dl {
         } catch (Throwable t) {
             throw rethrow(t);
         }
+    }
+
+    /**
+     * Finds symbols in everything the process has loaded, the executable included: dlsym(RTLD_DEFAULT).
+     * A Python with libpython built into its executable (Ubuntu's python3, uv's Linux builds) has no
+     * libpython file to open, but exports the Python API from the executable itself.
+     * Not available on Windows, where Python always runs from a python3XX.dll.
+     */
+    public static SymbolLookup processLookup() {
+        if (WINDOWS) {
+            throw new UnsupportedOperationException("no process-wide symbol lookup on Windows");
+        }
+        // <dlfcn.h>: RTLD_DEFAULT is ((void *) 0) on Linux and ((void *) -2) on macOS.
+        MemorySegment rtldDefault = MemorySegment.ofAddress(MAC ? -2L : 0L);
+        return name -> {
+            try (Arena a = Arena.ofConfined()) {
+                MemorySegment s = (MemorySegment) DLSYM.invokeExact(rtldDefault, a.allocateFrom(name));
+                return s.equals(MemorySegment.NULL) ? Optional.empty() : Optional.of(s);
+            } catch (Throwable t) {
+                throw rethrow(t);
+            }
+        };
     }
 
     /**

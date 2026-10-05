@@ -129,16 +129,25 @@ again after `Py_Finalize`.
 libpython is found with `dladdr` on a Python API symbol, not `sysconfig`.
 uv's Python builds report a baked-in `/install` prefix there.
 
-Python-first needs the running Python to use a shared libpython (decided
-2026-10-02, a narrow gap). On Linux some Pythons have libpython built into
-the executable: Ubuntu's and Debian's own `python3`, and uv's Linux builds.
-There `dladdr` finds the executable itself, and `jpy.py` stops with "this
-Python is statically linked; the FFM jpy needs a shared libpython". Loading
-a libpython file from disk instead is not an option: uv ships one next to
-its executable, and binding to it would mean a second, uninitialized copy
-of Python in the process. Workaround: a Python built with a shared
-libpython, such as the official `python` Docker images. macOS (uv, the
-python.org installer) and Windows Pythons use a shared libpython.
+Python-first works on any Python, including one with libpython built into
+its executable (decided 2026-10-05, reversing the 2026-10-02 call). On Linux
+that includes Ubuntu's and Debian's own `python3`, uv's Linux builds, and the
+Python in Deephaven's server image. There `dladdr` finds the executable
+itself, so `jpy.py` passes `-Djpy.pythonLib=process`. `CPython` then finds the
+Python API with `dlsym(RTLD_DEFAULT)` (`Dl.processLookup`), which searches
+everything the process has loaded, the executable included. This is how C
+jpy's extension module finds Python's functions too. Opening a libpython file
+found on disk would be wrong: uv ships one next to its executable, and
+binding to it would mean a second, uninitialized copy of Python in the
+process. `JPY_PYTHON_LIB=process` forces the lookup on any POSIX Python;
+`ffm/tests/ffm_process_lookup_test.py` uses it. Windows Pythons always run
+from a `python3XX.dll`.
+
+Java-first still needs a libpython file, as with C jpy: there is no Python in
+the process until Java loads one. `jpy.pythonLib=process` there fails with a
+clear message. CI runs the static case on Ubuntu's `/usr/bin/python3`, x64
+and arm64, Python-first only (`.github/workflows/ffm.yml`, job
+`static-python`; locally `ffm/docker/Dockerfile.ubuntu`).
 
 ## 6. Two CPython details worth knowing
 
@@ -302,7 +311,7 @@ Python-first and Java-first both work:
 
 | | Python-first (`jpyutil.init_jvm`) | Java-first (`PyLib.startPython`) |
 |---|---|---|
-| libpython | already loaded; `jpy.py` passes `-Djpy.pythonLib` | `jpy.pythonLib` property, `dlopen`ed `RTLD_GLOBAL` |
+| libpython | already loaded; `jpy.py` passes `-Djpy.pythonLib` (a path, or `process` when built into the executable) | `jpy.pythonLib` property, `dlopen`ed `RTLD_GLOBAL` |
 | `jpy` module | installed by `create_jvm` | imported by `PyLib`, then `Bootstrap.installEmbedded` sets `jpy._embedded` |
 | `jpy.has_jvm()` | true | true, and `create_jvm` does nothing |
 | `PyLib.stopPython` | does nothing (Java does not own Python) | `Bootstrap.uninstall`, then `Py_Finalize` |

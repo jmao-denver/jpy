@@ -140,7 +140,7 @@ def _vtable_fn(obj, index, restype, *argtypes):
 
 
 def _libpython_path():
-    """The path of the libpython image this interpreter runs from."""
+    """The path of the libpython image this interpreter runs from, or 'process' if it is built into the executable."""
     import ctypes
     override = _os.environ.get('JPY_PYTHON_LIB')
     if override:
@@ -160,8 +160,11 @@ def _libpython_path():
     if not libc.dladdr(address, ctypes.byref(info)) or not info.dli_fname:
         raise RuntimeError("jpy: cannot locate the libpython shared library of this interpreter")
     path = _os.path.realpath(info.dli_fname.decode())
-    if _os.path.realpath(path) == _os.path.realpath(_sys.executable):
-        raise RuntimeError("jpy: this Python is statically linked; the FFM jpy needs a shared libpython")
+    if path == _os.path.realpath(_sys.executable):
+        # libpython is built into the executable (Ubuntu's python3, uv's Linux builds). There is
+        # no file to open, so Java finds the Python API in the running process. Opening a
+        # libpython file found on disk would load a second, separate copy of Python.
+        return 'process'
     return path
 
 

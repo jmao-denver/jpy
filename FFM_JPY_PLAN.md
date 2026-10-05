@@ -22,7 +22,7 @@ that is a drop-in for the current JNI jpy:
 |---|---|
 | CPython 3.12+ only | 3.12 added buffer slots to `PyType_FromSpec` and `PyType_FromMetaclass`; a 3.12 floor keeps the implementation functions-only — no version-specific struct layouts anywhere |
 | JDK 25+ (LTS) | decided 2026-10-01: JDK 25 is the first LTS with FFM final (FFM is final since 22, which is not LTS); a single LTS floor keeps the support matrix small |
-| shared libpython required | matches today's Java-first requirement; drops the dlsym fallback. Confirmed 2026-10-02 as a narrow gap with an easy workaround: it affects only Python-first on Linux with a Python whose executable has libpython built in, such as Ubuntu's and Debian's own `python3` and uv's Linux builds (checked in Docker). C jpy works there because a C extension finds Python's functions in the executable. Workaround: a Linux Python built with a shared libpython (the official `python` Docker images; any `--enable-shared` build), or Java-first. The FFM jpy stops at once with a clear message on such a Python. Java-first is unaffected: Deephaven's server images already install Ubuntu's separate `libpython` package for it |
+| any libpython, Python-first | decided 2026-10-05, reversing the 2026-10-02 "shared libpython required" call after finding that Deephaven's Python test CI runs Python-first on Ubuntu's `python3`, which has libpython built into the executable. On such a Python the FFM jpy finds the Python API in the running process (`dlsym(RTLD_DEFAULT)`), as C jpy's extension does. Java-first still needs a libpython file, as with C jpy. CI covers it on Ubuntu's `/usr/bin/python3`, x64 and arm64 |
 | quirks replicated, not fixed | drop-in means bug-for-bug: smallest-box untyped ints (5 -> Byte), char <-> int, truthiness bools, silent narrowing truncation, string-flattened exceptions |
 | dual-track release | Deephaven drives this, but jpy has other users (ESA SNAP et al.) on older stacks. FFM jpy ships as a new major version beside a maintained JNI line; the old build matrix retires only when the JNI line does |
 
@@ -272,10 +272,8 @@ All nine are done; see Status.
   surprises the design note did not cover.
 - **Free-threaded Python: retired.** Everything passes on 3.13t and 3.14t
   with the GIL off, and a 16-thread stress test passes 10 of 10 runs on each.
-- **Static Python, Python-first (open):** Linux Pythons with libpython built
-  into the executable are unsupported. Found 2026-10-05: that includes the
-  Python in Deephaven's own test image, where Deephaven's CI runs its Python
-  tests Python-first.
+- **Static Python, Python-first: retired 2026-10-05.** Supported through a
+  process-wide symbol lookup. Verified on Ubuntu 24.04's `python3` in Docker.
 - **Vectorized UDF regression (open):** about 25% slower in Deephaven until
   array element access is tuned.
 - **Dual-track overhead**: maintaining both implementations during the
@@ -287,17 +285,7 @@ All nine are done; see Status.
 
 ## Decision requested
 
-**Python-first on Linux Pythons with libpython built into the executable.**
-Deephaven's CI runs its Python tests that way, inside its server image, whose
-Ubuntu `python3` is such a Python. So the current "unsupported" decision
-would break Deephaven's Python test CI.
+None open. Static Python, Python-first was decided on 2026-10-05: supported.
 
-- **A: keep it unsupported.** Deephaven's test image switches to a Python
-  with a shared libpython.
-- **B: support it.** The FFM jpy looks Python's functions up in the running
-  process (`dlsym(RTLD_DEFAULT)` on Linux) instead of requiring a libpython
-  file, as C jpy's extension does. Small change; Deephaven's images work
-  unchanged.
-
-Then: run Deephaven's Python test suite on both jpys and compare, and fix the
+Next: run Deephaven's Python test suite on both jpys and compare, and fix the
 vectorized UDF regression.

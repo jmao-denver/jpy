@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.function.Supplier;
 
 import org.jpy.ffm.Bootstrap;
+import org.jpy.ffm.CPython;
 import org.jpy.ffm.PyLibImpl;
 import org.jpy.ffm.PyObjects;
 
@@ -639,6 +640,12 @@ public class PyLib {
             } else {
                 // Java-first: the FFM bindings read the libpython path from this system property.
                 String pythonLibPath = getProperty(PYTHON_LIB_KEY, true);
+                if (pythonLibPath.equals(CPython.PROCESS)) {
+                    // There is no Python in this process to look up: Java starts Python here.
+                    throw new IllegalStateException(PYTHON_LIB_KEY + "=" + CPython.PROCESS
+                            + " only works when Python started the JVM. Java-first needs a shared libpython file;"
+                            + " this Python has libpython built into its executable.");
+                }
                 System.setProperty(PYTHON_LIB_KEY, pythonLibPath);
                 if (new File(pythonLibPath).isFile()) {
                     preloadPythonLib(pythonLibPath);

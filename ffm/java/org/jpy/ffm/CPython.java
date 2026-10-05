@@ -31,12 +31,16 @@ public final class CPython {
     static final Arena GLOBAL = Arena.global();
     static final SymbolLookup LIB;
 
+    /** Value of jpy.pythonLib that means "look the Python API up in the running process". */
+    public static final String PROCESS = "process";
+
     static {
         String path = System.getProperty("jpy.pythonLib");
         if (path == null || path.isEmpty()) {
             throw new IllegalStateException("system property 'jpy.pythonLib' is not set");
         }
-        LIB = SymbolLookup.libraryLookup(Path.of(path), GLOBAL);
+        // jpy.py passes "process" when the running Python has libpython built into its executable.
+        LIB = path.equals(PROCESS) ? Dl.processLookup() : SymbolLookup.libraryLookup(Path.of(path), GLOBAL);
     }
 
     public static final MemorySegment NULL = MemorySegment.NULL;
