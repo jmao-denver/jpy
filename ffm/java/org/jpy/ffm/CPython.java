@@ -362,6 +362,44 @@ public final class CPython {
         return Py_None;
     }
 
+    /**
+     * Py_REFCNT(o). 3.14 exports it as a function. 3.12 and 3.13 have only the macro, so the count
+     * is read from the object header, whose layout differs in free-threaded builds:
+     * { Py_ssize_t ob_refcnt; PyTypeObject* ob_type } with the GIL, and
+     * { uintptr_t ob_tid; uint16_t ob_flags; PyMutex ob_mutex; uint8_t ob_gc_bits;
+     * uint32_t ob_ref_local; Py_ssize_t ob_ref_shared; PyTypeObject* ob_type } without it.
+     * GIL held.
+     */
+    public static long refCount(MemorySegment o) {
+        try {
+            if (Refcnt.FUNCTION != null) {
+                return (long) Refcnt.FUNCTION.invokeExact(o);
+            }
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+        MemorySegment header = o.reinterpret(24);
+        if (!Refcnt.FREE_THREADED) {
+            return header.get(JAVA_LONG, 0);
+        }
+        int local = header.get(JAVA_INT, 12);
+        if (local == -1) {
+            // UINT32_MAX: immortal
+            return Long.MAX_VALUE;
+        }
+        return Integer.toUnsignedLong(local) + (header.get(JAVA_LONG, 16) >> 2);
+    }
+
+    /** Looked up on first use, when Python is running. */
+    private static final class Refcnt {
+        static final MethodHandle FUNCTION = LIB.find("Py_REFCNT")
+                .map(s -> LINKER.downcallHandle(s, FunctionDescriptor.of(JAVA_LONG, ADDRESS)))
+                .orElse(null);
+        /** ob_type sits at offset 8 with the GIL and at offset 24 without it. */
+        static final boolean FREE_THREADED =
+                Py_None.reinterpret(16).get(ADDRESS, 8).address() != typeAddress(Py_None);
+    }
+
     /** The address of the object's type. Borrowed: the object keeps its type alive. */
     public static long typeAddress(MemorySegment o) {
         try {

@@ -782,7 +782,7 @@ public final class PyLibImpl {
     public static void decRef(long pointer) {
         if (isInitialized()) {
             try (Gil.Ensured g = gil()) {
-                CPython.decRef(ptr(pointer));
+                checkedDecRef("decRef", pointer);
             }
         }
     }
@@ -791,10 +791,27 @@ public final class PyLibImpl {
         if (isInitialized()) {
             try (Gil.Ensured g = gil()) {
                 for (int i = 0; i < len; i++) {
-                    CPython.decRef(ptr(pointers[i]));
+                    checkedDecRef("decRefs", pointers[i]);
                 }
             }
         }
+    }
+
+    /**
+     * As the C jpy: an object whose count is already 0 or less is skipped, because a decRef would
+     * drive it negative or free it twice. That only happens after a double decRef elsewhere.
+     */
+    private static void checkedDecRef(String fn, long pointer) {
+        MemorySegment o = ptr(pointer);
+        long refCount = CPython.refCount(o);
+        if (refCount <= 0) {
+            if (diagFlags != 0) {
+                System.out.printf("org.jpy.PyLib.%s: error: refCount <= 0: pyObject=0x%x, refCount=%d%n",
+                        fn, pointer, refCount);
+            }
+            return;
+        }
+        CPython.decRef(o);
     }
 
     // ------------------------------------------------------------------
