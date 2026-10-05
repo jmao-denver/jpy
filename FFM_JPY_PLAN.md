@@ -1,8 +1,10 @@
 # Plan: FFM-based jpy (drop-in successor to JNI jpy)
 
-Status: proposal for peer review. Companion document: `FFM_REWRITE_RESEARCH.md`
-(full analysis, measurements, prototype results). Prototype code:
-`ffm-prototype/` on branch `worktree-ffm-prototype`.
+Status (2026-10-05): all nine sessions done; the definition of done is met on
+Linux, Windows and macOS. Now trying the FFM jpy with Deephaven Core. Code on
+branch `worktree-ffm-prototype`, pushed as `ffm-jpy` on `jmao-denver/jpy`.
+Design: `ffm/DESIGN.md`. Companion document: `FFM_REWRITE_RESEARCH.md` (the
+original analysis and prototype results).
 
 ## Goal
 
@@ -10,8 +12,9 @@ A rewrite of jpy on the Java FFM API (java.lang.foreign; final since JDK 22, tar
 that is a drop-in for the current JNI jpy:
 
 - same `jpy` module API in Python, same `org.jpy` API in Java
-- definition of done: **jpy's own test suites (24 Python test files, 11 Java
-  test classes) pass unmodified** against the FFM build
+- definition of done: **jpy's own test suites pass unmodified** against the
+  FFM build: the 22 Python test files jpy's `setup.py` runs and the 8 JUnit
+  classes Maven runs
 
 ## Scope decisions (made, with rationale)
 
@@ -152,11 +155,15 @@ despite it. The prototype's ~106 ns per Python-to-Java call is not reached:
 the full port does overload scoring and many small CPython downcalls per
 call. Those are the levers if more speed is wanted.
 
-## Performance ROI (honest version)
+## Performance ROI (honest version, measured)
 
-- Scalar per-row Python UDFs: projected **4-6x** (landing zone
-  300-500 ns/row; dilutes to 2x with a 1 us UDF body)
-- Vectorized UDFs, listeners, Barrage, interactive use: **~unchanged**
+- Scalar per-row Python UDFs in Deephaven: **about 2x** (2015 -> 1040 ns per
+  row). The prototype projected 4-6x; the full port makes many small CPython
+  calls per crossing and scores overloads on every call.
+- Auto-vectorized Python UDFs in Deephaven: **about 25% slower** (314 -> 398
+  ns per row), from per-element Java array access through Java. Fixable;
+  the top performance item.
+- Listeners, Barrage, interactive use: not measured.
 - The GIL remains the ceiling for Python-heavy work; FFM does not address it
 
 **Performance alone does not justify the project.** The case is: delete
@@ -253,20 +260,24 @@ two focused attempts are skipped and listed, not hidden.
 6. **Java-side lifecycle** — `PyObjectTest`, `PyModuleTest`, cleanup/reachability
 7. **Diagnostics + exception translation** — `jpy_diag_test.py`, `jpy.VerboseExceptions` in `jpy_exception_test.py`, Java cause chains (`PyProxyTest` already passed in session 6)
 8. **Full sweep** — both suites on 3.12, then 3.13/3.14, then 3.13t/3.14t
-9. **Linux and Windows** — the loader (jvm.dll via ctypes) and libpython discovery are untested off macOS; needs Linux/Windows boxes or CI
+9. **Linux and Windows** — CI (`.github/workflows/ffm.yml`) on Linux x64/arm64, Windows and macOS, plus Linux in Docker (`ffm/docker`)
+
+All nine are done; see Status.
 
 ## Cost and risks
 
-- **Effort**: 15-19 engineer-weeks equivalent. As agent sessions: ~2-4
-  calendar weeks, order of 50-150M tokens, ~10 minutes of human review per
-  session.
-- **Front-loaded risk**: sessions 1-3 (type system, overloads) hold any
-  design surprises; the back half is mechanical.
-- **Free-threaded Python** (session 8 tail) may end in "conclusive failure
-  with findings" — a legitimate outcome, mirrored by the JNI jpy's own
-  recent free-threading work. Partially de-risked: the prototype already
-  runs on 3.13t unchanged, though the full type system will face real
-  concurrency questions the prototype does not.
+- **Effort**: estimated at 15-19 engineer-weeks equivalent. Actual: the nine
+  sessions took about a week (2026-09-30 to 2026-10-02) plus review rounds.
+- **Front-loaded risk: retired.** The type system and overloads held no
+  surprises the design note did not cover.
+- **Free-threaded Python: retired.** Everything passes on 3.13t and 3.14t
+  with the GIL off, and a 16-thread stress test passes 10 of 10 runs on each.
+- **Static Python, Python-first (open):** Linux Pythons with libpython built
+  into the executable are unsupported. Found 2026-10-05: that includes the
+  Python in Deephaven's own test image, where Deephaven's CI runs its Python
+  tests Python-first.
+- **Vectorized UDF regression (open):** about 25% slower in Deephaven until
+  array element access is tuned.
 - **Dual-track overhead**: maintaining both implementations during the
   overlap raises total burden before the matrix savings cash in.
 - **Pinning risk: retired.** Session 5 showed the C jpy copies rather than
@@ -276,5 +287,17 @@ two focused attempts are skipped and listed, not hidden.
 
 ## Decision requested
 
-Green-light session 1 (type system against `jpy_gettype_test.py`), with the
-session-1 design note as the first review gate.
+**Python-first on Linux Pythons with libpython built into the executable.**
+Deephaven's CI runs its Python tests that way, inside its server image, whose
+Ubuntu `python3` is such a Python. So the current "unsupported" decision
+would break Deephaven's Python test CI.
+
+- **A: keep it unsupported.** Deephaven's test image switches to a Python
+  with a shared libpython.
+- **B: support it.** The FFM jpy looks Python's functions up in the running
+  process (`dlsym(RTLD_DEFAULT)` on Linux) instead of requiring a libpython
+  file, as C jpy's extension does. Small change; Deephaven's images work
+  unchanged.
+
+Then: run Deephaven's Python test suite on both jpys and compare, and fix the
+vectorized UDF regression.

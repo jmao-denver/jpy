@@ -1,5 +1,11 @@
 # Research: rewriting jpy with the Java FFM API (JDK 25+)
 
+**Note (2026-10-05):** this is the analysis written before the port. The port
+is done (`FFM_JPY_PLAN.md`, Status). Where this document projects, the plan's
+measured numbers win: for example scalar Deephaven UDFs measured about 2x
+faster, not the projected 4-6x, and auto-vectorized UDFs about 25% slower,
+not unchanged.
+
 **Scope decision (2026-09-30): the FFM drop-in targets CPython 3.12+ only.**
 3.12 is where PyType_FromSpec gained buffer slots and PyType_FromMetaclass
 appeared, so a 3.12 floor keeps the whole implementation functions-only: no
