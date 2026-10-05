@@ -30,7 +30,10 @@ import java.util.Map;
  * Note, jpy's JSR 223 support is not yet functional. This class is only used by unit-tests so far.
  *
  * @author Norman Fomferra
+ *
+ * @deprecated Not functional and not registered as a service. To be removed in a later release.
  */
+@Deprecated(since = "3.0", forRemoval = true)
 public class ScriptEngineFactoryImpl implements ScriptEngineFactory {
 
     private final Map<String, Object> parameters;

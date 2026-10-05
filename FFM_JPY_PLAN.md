@@ -24,6 +24,7 @@ that is a drop-in for the current JNI jpy:
 | JDK 25+ (LTS) | decided 2026-10-01: JDK 25 is the first LTS with FFM final (FFM is final since 22, which is not LTS); a single LTS floor keeps the support matrix small |
 | any libpython, Python-first | decided 2026-10-05, reversing the 2026-10-02 "shared libpython required" call after finding that Deephaven's Python test CI runs Python-first on Ubuntu's `python3`, which has libpython built into the executable. On such a Python the FFM jpy finds the Python API in the running process (`dlsym(RTLD_DEFAULT)`), as C jpy's extension does. Java-first still needs a libpython file, as with C jpy. CI covers it on Ubuntu's `/usr/bin/python3`, x64 and arm64 |
 | quirks replicated, not fixed | drop-in means bug-for-bug: smallest-box untyped ints (5 -> Byte), char <-> int, truthiness bools, silent narrowing truncation, string-flattened exceptions |
+| deprecate unused API, remove later | decided 2026-10-05: `org.jpy.annotations` (`Mutable`, `Output`, `Return`, never read by any jpy) and `org.jpy.jsr223` (not functional, not registered) are used only by jpy's own tests. They are marked `@Deprecated(forRemoval = true)` in 3.0 and removed in a later release, so 3.0 stays a drop-in replacement and jpy's tests run unmodified |
 | dual-track release | Deephaven drives this, but jpy has other users (ESA SNAP et al.) on older stacks. FFM jpy ships as a new major version beside a maintained JNI line; the old build matrix retires only when the JNI line does |
 
 ## Improvements over the C jpy

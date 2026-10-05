@@ -303,7 +303,12 @@ when the wrapper is deallocated, as in the C jpy. Access after that throws
 
 jpy's Java API is unchanged: `PyLib`, `PyObject`, `PyModule`,
 `PyInputMode`, `PyDictWrapper`, `PyListWrapper`, `PyProxyHandler` and the
-JSR-223 engine compile from `src/main/java` as they are. `ffm/build.sh`
+JSR-223 engine compile from `src/main/java` as they are. Two parts are
+marked `@Deprecated(since = "3.0", forRemoval = true)` (decided 2026-10-05),
+because nothing uses them: the parameter annotations in `org.jpy.annotations`,
+which no jpy ever reads, and the JSR-223 engine in `org.jpy.jsr223`, which jpy
+itself calls not functional and does not register as a service. Only jpy's own
+tests use them, so they stay in 3.0 and go in a later release. `ffm/build.sh`
 replaces two classes with copies under `ffm/java/org/jpy`:
 
 - `PyLib`: every former `native` method calls `org.jpy.ffm.PyLibImpl`, a

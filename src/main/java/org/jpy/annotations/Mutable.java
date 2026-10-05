@@ -27,8 +27,11 @@ import java.lang.annotation.Target;
  * <i>Note: this class is not used yet.</i>
  *
  * @author Norman Fomferra
+ *
+ * @deprecated Never read by jpy. To be removed in a later release.
  */
 @Target(value = ElementType.PARAMETER)
 @Retention(value = RetentionPolicy.RUNTIME)
+@Deprecated(since = "3.0", forRemoval = true)
 public @interface Mutable {
 }

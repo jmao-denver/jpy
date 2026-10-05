@@ -38,7 +38,10 @@ import java.util.stream.Collectors;
  *
  * @author Norman Fomferra
  * @since 0.8
+ *
+ * @deprecated Not functional and not registered as a service. To be removed in a later release.
  */
+@Deprecated(since = "3.0", forRemoval = true)
 class ScriptEngineImpl extends AbstractScriptEngine implements Invocable {
 
     public static final String EXTRA_PATHS_KEY = ScriptEngineImpl.class.getName() + ".extraPaths";
